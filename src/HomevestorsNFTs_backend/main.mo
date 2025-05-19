@@ -119,7 +119,7 @@ actor {
   };
 
   public shared ({caller}) func updateTokenMetadata(args: [TokenMetadataArgs]): async [?TokenMetadataResult] {
-    let (results, updatedCtx) = Metadata.updateTokenMetadata(args, ctx, caller); 
+    let (results, updatedCtx) = ICRC7.updateTokenMetadata(args, ctx, caller); 
     ctx := updatedCtx;
     return results;
   };  
@@ -204,7 +204,7 @@ actor {
   };
 
   public query func icrc7_atomic_batch_transfers() : async ?Bool {
-    return ?Utils.icrc7_atomic_batch_transfers(ctx);
+    return ?Metadata.icrc7_atomic_batch_transfers(ctx);
   };
 
   public query func icrc7_tx_window() : async ?Nat {

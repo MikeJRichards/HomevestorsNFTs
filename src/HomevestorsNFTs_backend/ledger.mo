@@ -16,43 +16,48 @@ module {
     type TransferFromArg = Types.TransferFromArg;
     type TokenMetadataArg = Types.TokenMetadataArg;
     type MintArg = Types.MintArg;
-    type BlockOp = Types.BlockOp;
     type Block = Types.Block;
     type Tx = Types.Tx;
+    type Arg = Types.Arg;
+    type Intent = Types.Intent;
+    type TxnContext = Types.TxnContext;
 
     
 
-    public func createBlock(op: BlockOp): Block {
-        {
-            btype = createBtype(op);
-            ts = Int.abs(Time.now());
-            tx = createTX(op);
+    public func updateLedger(intent: Intent, ctx: TxnContext): TxnContext {
+        let block = {
+             btype = createBtype(intent);
+             ts = Int.abs(Time.now());
+             tx = createTX(intent, ctx.totalSupply);
+        };
+        ctx.index += 1;
+        ctx.ledger.put(ctx.index, block);
+        return ctx;
+    };
+
+    func createTX(intent: Intent, tid: Nat): Tx {
+        switch(intent){
+            case(#Mint(arg, from)) createMintTx(arg, from, tid);
+            case(#Burn(arg, from, _)) createBurnTx(arg, from);
+            case(#Transfer(arg, from, _)) createTransferTx(arg, from);
+            case(#UpdateMetadata(arg, from, _)) createMetaTx(arg, from);
+            case(#ApproveToken(arg, from, _)) createApproveTx(arg.approval_info, ?arg.token_id, from);
+            case(#ApproveCollection(arg, from, _)) createApproveTx(arg.approval_info, null, from);
+            case(#RevokeToken(arg, from, _)) createRevokeTokenTx(arg, from);
+            case(#RevokeCollection(arg, from, _)) createRevokeCollectionTx(arg, from);
+            case(#TransferFrom(arg, callerAccount, _)) createTransferFromTx(arg, callerAccount);
         }
     };
 
-    func createTX(op: BlockOp): Tx {
-        switch(op){
-            case(#Mint(arg, from, tid)) createMintTx(arg, from, tid);
-            case(#Burn(arg, from)) createBurnTx(arg, from);
-            case(#Transfer(arg, from)) createTransferTx(arg, from);
-            case(#Meta(arg, from)) createMetaTx(arg, from);
-            case(#ApproveToken(arg, tokenId, from)) createApproveTx(arg, ?tokenId, from);
-            case(#ApproveCollection(arg, from)) createApproveTx(arg, null, from);
-            case(#RevokeTokenApproval(arg, from)) createRevokeTokenTx(arg, from);
-            case(#RevokeCollection(arg, from)) createRevokeCollectionTx(arg, from);
-            case(#TransferFrom(arg, spender)) createTransferFromTx(arg, spender);
-        }
-    };
-
-    func createBtype(op: BlockOp): Text {
-        switch(op){
+    func createBtype(intent: Intent): Text {
+        switch(intent){
             case(#Mint(_))"7mint";
             case(#Burn(_))"7burn";
             case(#Transfer(_))"7xfer";
-            case(#Meta(_))"7update_token";
+            case(#UpdateMetadata(_))"7update_token";
             case(#ApproveToken(_))"37approve";
             case(#ApproveCollection(_))"37approve_coll";
-            case(#RevokeTokenApproval(_))"37revoke";
+            case(#RevokeToken(_))"37revoke";
             case(#RevokeCollection(_))"37revoke_coll";
             case(#TransferFrom(_))"37xfer";
         }

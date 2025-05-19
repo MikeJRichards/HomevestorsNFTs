@@ -1,13 +1,10 @@
 import Types "types";
-import Ledger "ledger";
-import Utils "utils";
 import Array "mo:base/Array";
 import Nat "mo:base/Nat";
 import Text "mo:base/Text";
 import Principal "mo:base/Principal";
-import Buffer "mo:base/Buffer";
-import HashMap "mo:base/HashMap";
-import Iter "mo:base/Iter";
+import Time "mo:base/Time";
+import Nat64 "mo:base/Nat64";
 
 
 module {
@@ -24,6 +21,7 @@ module {
     type StandardError = Types.StandardError;
     type TokenRecords = Types.TokenRecords;
     type ValidationOutcome = Types.ValidationOutcome;
+    type ValidationError = Types.ValidationError;
 
      public func initiateMetadata(metadata: Metadata, totalSupply: Nat, propertyId: Nat): Metadata {
         metadata.put("icrc7:symbol", #Text("HVD-P"#Nat.toText(propertyId)));
@@ -170,32 +168,7 @@ module {
         });
     };
 
-  public func updateTokenMetadata(args: [TokenMetadataArg], ctx: TxnContext, caller: Principal): ([?TokenMetadataResult], TxnContext) {
-    let validations = Buffer.Buffer<ValidationOutcome>(args.size());
-    for(i in Iter.range(0, args.size())){
-      switch(Utils.validate(#UpdateMetadata(args[i]), args[i], ?#Token(ctx.tokens.get(args[i].token_id)), null, caller, ctx, i)){
-        case(#err(e)) return ([?#Err(e)], ctx);
-        case(#ok(result)) validations.add(result);
-      }
-    };
-    var results = Buffer.Buffer<?TokenMetadataResult>(args.size());
-    for (validation in validations.vals()) {
-      switch(validation){
-        case(#err(#BaseError(e: StandardError)) or #err(#StandardError(e))) results.add(?#Err(e));
-        case(#ok((#UpdateMetadata(arg), #Token(_, token)))){
-          let tokenMetadata = HashMap.fromIter<Text, Value>(token.metadata.vals(), 0, Text.equal, Text.hash);
-          tokenMetadata.put(arg.key, arg.value);
-          ctx.tokens.put(arg.token_id, {token with metadata = Iter.toArray(tokenMetadata.entries())});
-          ctx.index += 1;
-          results.add(?#Ok(ctx.index));
-          ctx.ledger.put(ctx.index, Ledger.createBlock(#Meta(arg, {owner = caller; subaccount = arg.from_subaccount})));
-        };
-        case(_) results.add(?#Err(#GenericError{error_code = 998; message = "invalid response";}));
-      };
-      };
-    ctx.metadata.put("icrc7:total_supply", #Nat(ctx.totalSupply));
-    return (Iter.toArray(results.vals()), ctx);
-  };
+    
 
 
   public func removeTokenMetadata(ctx: TxnContext, tokenId: Nat, key: Text, caller: Principal): TxnContext {
@@ -224,6 +197,84 @@ module {
         };
 
         return results;
+    };
+
+    public func maxQuery(size: Nat, metadata:Metadata): Bool {
+        switch(metadata.get("icrc7:max_query_batch_size")){
+            case(?#Nat(n)) size > n;
+            case(_) false;
+        };
+    };
+
+    public func maxUpdate(size: Nat, metadata: Metadata): Bool {
+        switch (metadata.get("icrc7:max_update_batch_size")) {
+          case (?#Nat(n)) size > n;
+          case (_) false;
+        }
+    };
+
+    public func memoTooLarge(memo: ?Blob, metadata: Metadata): Bool {
+      switch (memo, metadata.get("icrc7:max_memo_size")) {
+        case (?m, ?#Nat(limit)) m.size() > limit;
+        case (_) false;
+      }
+    };
+
+    public func getTake(take: ?Nat, size: Nat, metadata: Metadata): Nat {
+      switch (take, metadata.get("icrc7:default_take_value")) {
+        case (?t, _) t;
+        case (null, ?#Nat(d)) d;
+        case(null, _) size; 
+      }
+    };
+
+    public func getMaxTake(size: Nat, metadata: Metadata): Nat {
+      switch (metadata.get("icrc7:max_take_value")) {
+        case (?#Nat(t)) if(size > t) t else size;
+        case(_) size; 
+      }
+    };
+
+    public func tooOld(created_at_time: ?Nat64, metadata: Metadata): Bool {
+      switch (created_at_time, metadata.get("icrc7:tx_window")) {
+        case (?t, ?#Nat(w)) if(Time.now() - w > Nat64.toNat(t)) true else false;  
+        case(_, _) false; 
+      }
+    };
+
+    public func createdInFuture(created_at_time: ?Nat64, metadata: Metadata): Bool {
+      switch (created_at_time, metadata.get("icrc7:permitted_drift")) {
+        case (?t, ?#Nat(d)) if(Nat64.toNat(t) > Time.now() + d) true else false;  
+        case(_, _) false; 
+      }
+    };
+
+    public func maxApprovals(test: Bool, size: Nat, metadata: Metadata): Bool {
+      switch (metadata.get("icrc37_max_approvals_per_token_or_collection"), test) {
+        case (?#Nat(m), true) size > m;
+        case(_, _) false; 
+      }
+    };
+
+    public func maxApprovalRevokes(count: Nat, metadata: Metadata): Bool {
+      switch (metadata.get("icrc37:max_revoke_approvals")) {
+        case (?#Nat(m)) count > m; 
+        case(_) false; 
+      }
+    };
+
+    public func exceedMaxSupply(ctx: TxnContext): Bool {
+      switch (ctx.metadata.get("icrc7:total_supply")) {
+        case (?#Nat(m)) ctx.totalSupply + 1 > m; 
+        case(_) false; 
+      }
+    };
+
+    public func icrc7_atomic_batch_transfers(ctx: TxnContext): Bool {
+      switch (ctx.metadata.get("icrc7:atomic_batch_transfers")) {
+        case (?#Text("true")) true; 
+        case(_) false; 
+      }
     };
 
 

@@ -1,13 +1,9 @@
 import Types "types";
 import Utils "utils";
-import Ledger "ledger";
 import Principal "mo:base/Principal";
 import Nat "mo:base/Nat";
-import Time "mo:base/Time";
 import Iter "mo:base/Iter";
 import Array "mo:base/Array";
-import Buffer "mo:base/Buffer";
-
 
 module ICRC7 {
     type Account = Types.Account;
@@ -23,100 +19,55 @@ module ICRC7 {
     type TxnContext = Types.TxnContext;
     type MintError = Types.MintError;
     type ValidationOutcome = Types.ValidationOutcome;
-    
-    public func icrc7_transferHelper(args: [TransferArg], ctx: TxnContext, caller: Principal): ([?TransferResult], TxnContext) {
-      let validations = Buffer.Buffer<ValidationOutcome>(args.size());
-      for(i in Iter.range(0, args.size())){
-        switch(Utils.validate(#Transfer(args[i]), args[i], ?#Token(ctx.tokens.get(args[i].token_id)), null, caller, ctx, i)){
-          case(#err(e)) return ([?#Err(e)], ctx);
-          case(#ok(result)) validations.add(result);
-        }
-      };
-      var results = Buffer.Buffer<?TransferResult>(args.size());
-      for (validation in validations.vals()) {
-          switch(validation){
-            case(#err(#TransferError(e)) or #err(#BaseError(e: TransferError)) or #err(#StandardError(e: TransferError))) results.add(?#Err(e));
-            case(#ok((#Transfer(arg), #Token(caller, _)))){
-              ctx.tokens := Utils.updateTokenRecordOnTransfer(ctx.tokens, arg.token_id, arg.to, #Transfer);
-              ctx.accounts := Utils.updateAccountRecordsOnTransfer(ctx.accounts, arg.to, arg.token_id, #Receive);
-              ctx.accounts := Utils.updateAccountRecordsOnTransfer(ctx.accounts, caller, arg.token_id, #Send);
-              ctx.index += 1;
-              ctx.ledger.put(ctx.index, Ledger.createBlock(#Transfer(arg, caller)));
-              results.add(?#Ok(ctx.index));
-            };
-            case(_) results.add(?#Err(#GenericError{error_code = 998; message = "canister error"}));
-          };
-        };
-      return (Iter.toArray(results.vals()), ctx);
-    };
+    type ValidationError = Types.ValidationError;
+    type Arg = Types.Arg;
+    type Intent = Types.Intent;
+    type BaseError = Types.BaseError;
+    type TokenMetadataResult = Types.TokenMetadataResult;
+    type TokenMetadataArg = Types.TokenMetadataArg;
+    type StandardError = Types.StandardError;
 
-     func mintNewToken(arg: MintArg): TokenRecord {
-      {
-        owner = arg.to;
-        metadata = arg.meta;
-        history = [(arg.to.owner, Time.now(), #Mint)];
-        approvals = [];
+    public func handleMintValidationError(error: ValidationError): ?MintResult {
+      switch(error){
+        case(#TransferError(e: MintError) or #BaseError(e: MintError) or #StandardError(e: MintError) or #MintError(e)) return ?#Err(e);
+        case(_) return ?#Err(#GenericError{error_code = 998; message = "invalid response";})
       }
     };
 
-    func updateCtxOnSuccessfulMint(ctx: TxnContext, from:Account, arg: MintArg): TxnContext {
-      ctx.tokens.put(ctx.totalSupply, mintNewToken(arg));
-      ctx.accounts:= Utils.updateAccountRecordsOnTransfer(ctx.accounts, from, ctx.totalSupply, #Mint);
-      ctx.totalSupply += 1;
-      ctx.index += 1;
-      ctx.ledger.put(ctx.index, Ledger.createBlock(#Mint(arg, from, ctx.totalSupply)));
-      return ctx;
-    }; 
+    public func handleTransferValidationError(error: ValidationError): ?TransferResult {
+      switch(error){
+        case(#TransferError(e) or #BaseError(e: TransferError) or #StandardError(e: TransferError)) return ?#Err(e);
+        case(_) return ?#Err(#GenericError{error_code = 998; message = "invalid response";})
+      }
+    };
+    
+    public func icrc7_transferHelper(args: [TransferArg], ctx: TxnContext, caller: Principal): ([?TransferResult], TxnContext) {
+      Utils.batchExecute<TransferArg, TransferResult>(args, ctx, caller, func(arg: TransferArg) { #Transfer(arg) },  handleTransferValidationError, func(index) { ?#Ok(index) });
+    };
+
+   
 
     public func mintNFT(args: [MintArg], ctx: TxnContext, caller: Principal): ([?MintResult], TxnContext) {
-      let validations = Buffer.Buffer<ValidationOutcome>(args.size());
-      for(i in Iter.range(0, args.size())){
-        switch(Utils.validate(#Mint(args[i]), args[i], ?#Admin({owner = ctx.admin; subaccount = args[i].from_subaccount}), null, caller, ctx, i)){
-          case(#err(e)) return ([?#Err(e)], ctx);
-          case(#ok(result)) validations.add(result);
-        }
-      };
-      var results = Buffer.Buffer<?MintResult>(args.size());
-      var updatedCtx = ctx;
-      for (validation in validations.vals()) {
-            switch(validation){
-          case(#err(#TransferError(e: MintError)) or #err(#BaseError(e: MintError)) or #err(#StandardError(e: MintError)) or #err(#MintError(e))) results.add(?#Err(e));
-          case(#ok((#Mint(arg), #Caller(from)))){
-            updatedCtx := updateCtxOnSuccessfulMint(updatedCtx, from, arg);
-            results.add(?#Ok(ctx.index));
-          };
-          case(_) results.add(?#Err(#GenericError{error_code = 998; message = "invalid response";}));
-        };
-        };
-      ctx.metadata.put("icrc7:total_supply", #Nat(ctx.totalSupply));
-      return (Iter.toArray(results.vals()), ctx);
+      let (results, updatedCtx) = Utils.batchExecute<MintArg, MintResult>(args, ctx, caller, func(arg: MintArg) { #Mint(arg) },  handleMintValidationError, func(index) { ?#Ok(index) });
+      updatedCtx.metadata.put("icrc7:total_supply", #Nat(updatedCtx.totalSupply));
+      return (results, updatedCtx);
     };
 
     public func burnNFT(args: [BurnArg], ctx: TxnContext, caller: Principal): ([?TransferResult], TxnContext) {
-      let validations = Buffer.Buffer<ValidationOutcome>(args.size());
-      for(i in Iter.range(0, args.size())){
-        switch(Utils.validate(#Burn(args[i]), args[i], ?#Token(ctx.tokens.get(args[i].token_id)), null, caller, ctx, i)){
-          case(#err(e)) return ([?#Err(e)], ctx);
-          case(#ok(result)) validations.add(result);
-        }
-      };
-      var results = Buffer.Buffer<?TransferResult>(args.size());
-      for (validation in validations.vals()) {
-         switch (validation) {
-          case (#err(#BaseError(e : TransferError)) or #err(#StandardError(e: TransferError)) or #err(#TransferError(e))) results.add(?#Err(e));
-          case (#ok((#Burn(arg), #Token(callerAccount, token)))){
-              ctx.tokens.delete(arg.token_id);
-              ctx.accounts := Utils.updateAccountRecordsOnTransfer(ctx.accounts, token.owner, arg.token_id, #Burn);
-              ctx.totalSupply := ctx.totalSupply - 1;
-              ctx.index += 1;
-              ctx.ledger.put(ctx.index, Ledger.createBlock(#Burn(arg, callerAccount)));
-              results.add(?#Ok(ctx.index));
-          };
-          case(_) {results.add(?#Err(#GenericError{error_code = 998; message = "invalid response";}))};
-        };
-        };
-      ctx.metadata.put("icrc7:total_supply", #Nat(ctx.totalSupply));
-      return (Iter.toArray(results.vals()), ctx);
+      let (results, updatedCtx) = Utils.batchExecute<BurnArg, TransferResult>(args, ctx, caller, func(arg: BurnArg) { #Burn(arg) },  handleTransferValidationError, func(index) { ?#Ok(index) });
+      updatedCtx.metadata.put("icrc7:total_supply", #Nat(updatedCtx.totalSupply));
+      return (results, updatedCtx);
+    };
+
+    public func handleMetadataUpdateValidationError(error: ValidationError): ?TokenMetadataResult {
+      switch(error){
+        case(#BaseError(e: StandardError) or #StandardError(e)) return ?#Err(e);
+        case(_) return ?#Err(#GenericError{error_code = 998; message = "invalid response";})
+      }
+    };
+
+    public func updateTokenMetadata(args: [TokenMetadataArg], ctx: TxnContext, caller: Principal): ([?TokenMetadataResult], TxnContext) {
+      Utils.batchExecute<TokenMetadataArg, TokenMetadataResult>(args, ctx, caller, func(arg: TokenMetadataArg) { #UpdateMetadata(arg) },  handleMetadataUpdateValidationError, func(index) { ?#Ok(index) });
     };
 
     public func icrc7_owner_of(token_ids: [Nat], tokens: TokenRecords) : [ ?Account ] {

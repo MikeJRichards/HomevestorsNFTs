@@ -55,19 +55,6 @@ module {
         ts: ?Nat;
     };
 
-    public type BlockOp = {
-        #Mint :(MintArg, Account, Nat);
-        #Burn :(BurnArg, Account);
-        #Transfer :(TransferArg, Account);
-        #Meta :(TokenMetadataArg, Account);
-        #ApproveToken :(ApprovalInfo, Nat, Account);
-        #ApproveCollection :(ApprovalInfo, Account);
-        #RevokeTokenApproval :(RevokeTokenApprovalArg, Account);
-        #RevokeCollection: (RevokeCollectionApprovalArg, Account);
-        #TransferFrom: (TransferFromArg, Account);
-    };
-  
-
     public type MintResult = {
       #Ok: Nat;
       #Err: MintError;
@@ -88,10 +75,10 @@ module {
         caller: Account;
         recipient: ?Account;
         spender: ?Account;
-        authorized: ?Authorized;
+        authorized: Authorized;
         memo: ?Blob;
         maxApprovals: Bool;
-        approvalExists: ?{spender: Account; btype: Text};
+        approvalExists: ?{#TransferFrom; #Revoke};
         minting: Bool;
     };
 
@@ -113,6 +100,20 @@ module {
       #TransferFrom : TransferFromArg;
       #UpdateMetadata: TokenMetadataArg;
     };
+
+    public type Intent = {
+        #Mint: (MintArg, Account);
+        #ApproveCollection: (ApproveCollectionArg, Account, AccountRecord);
+        #RevokeCollection: (RevokeCollectionApprovalArg, Account, AccountRecord);
+        #Burn : (BurnArg, Account, TokenRecord);
+        #Transfer :(TransferArg, Account, TokenRecord);
+        #ApproveToken: (ApproveTokenArg, Account, TokenRecord);
+        #RevokeToken: (RevokeTokenApprovalArg, Account, TokenRecord);
+        #TransferFrom: (TransferFromArg, Account, TokenRecord);
+        #UpdateMetadata: (TokenMetadataArg, Account, TokenRecord);
+    };
+
+
     
     public type BurnArg = {
         token_id : Nat;
@@ -240,21 +241,17 @@ module {
         #ApproveCollectionError: ApproveCollectionError;
         #RevokeCollectionApprovalError : RevokeCollectionApprovalError;
         #Automic;
+        #LogicError;
     };
 
-    public type ValidationOutcome = Result.Result<(Arg, Intent), ValidationError>;
+    public type ValidationOutcome = Result.Result<Intent, ValidationError>;
     public type ValidationResult = Result.Result<ValidationOutcome, BaseError>;
 
-    public type Intent = {
-        #Caller: Account;
-        #Token: (Account, TokenRecord);
-        #Account: (Account, AccountRecord);
-    };    
+ 
 
     public type TokenRecord = {
       owner: Account;
       metadata: [(Text, Value)];
-      history: [(Principal, Int, TransactionType)]; // (owner, timestamp)
       approvals : [ApprovalInfo];
     };
 
@@ -271,12 +268,8 @@ module {
     };
 
     public type TransactionType = {
-       #Burn;
-       #Transfer;
        #Send;
        #Receive;
-       #Mint;
-       #TransferFrom;
     };
  
  

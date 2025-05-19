@@ -1,4 +1,6 @@
 import Types "types";
+import Ledger "ledger";
+import Meta "metadata";
 import Hash "mo:base/Hash";
 import Result "mo:base/Result";
 import Principal "mo:base/Principal";
@@ -9,6 +11,8 @@ import Nat64 "mo:base/Nat64";
 import Time "mo:base/Time";
 import Option "mo:base/Option";
 import Array "mo:base/Array";
+import Buffer "mo:base/Buffer";
+import Iter "mo:base/Iter";
 module {
     type Account = Types.Account;
     type ApprovalInfo = Types.ApprovalInfo;
@@ -27,6 +31,9 @@ module {
     type Metadata = Types.Metadata;
     type Intent = Types.Intent;
     type TokenRecord = Types.TokenRecord;
+    type MintArg = Types.MintArg;
+    type ApproveCollectionArg = Types.ApproveCollectionArg;
+    type Value = Types.Value;
     
     public func accountEqual(a : Account, b : Account) : Bool {
          Principal.equal(a.owner, b.owner) and
@@ -63,83 +70,7 @@ module {
        Text.hash(Nat.toText(n));  
     };
 
-    public func maxQuery(size: Nat, metadata:Metadata): Bool {
-        switch(metadata.get("icrc7:max_query_batch_size")){
-            case(?#Nat(n)) size > n;
-            case(_) false;
-        };
-    };
-
-    public func maxUpdate(size: Nat, metadata: Metadata): Bool {
-        switch (metadata.get("icrc7:max_update_batch_size")) {
-          case (?#Nat(n)) size > n;
-          case (_) false;
-        }
-    };
-
-    public func memoTooLarge(memo: ?Blob, metadata: Metadata): Bool {
-      switch (memo, metadata.get("icrc7:max_memo_size")) {
-        case (?m, ?#Nat(limit)) m.size() > limit;
-        case (_) false;
-      }
-    };
-
-    public func getTake(take: ?Nat, size: Nat, metadata: Metadata): Nat {
-      switch (take, metadata.get("icrc7:default_take_value")) {
-        case (?t, _) t;
-        case (null, ?#Nat(d)) d;
-        case(null, _) size; 
-      }
-    };
-
-    public func getMaxTake(size: Nat, metadata: Metadata): Nat {
-      switch (metadata.get("icrc7:max_take_value")) {
-        case (?#Nat(t)) if(size > t) t else size;
-        case(_) size; 
-      }
-    };
-
-    public func tooOld(created_at_time: ?Nat64, metadata: Metadata): Bool {
-      switch (created_at_time, metadata.get("icrc7:tx_window")) {
-        case (?t, ?#Nat(w)) if(Time.now() - w > Nat64.toNat(t)) true else false;  
-        case(_, _) false; 
-      }
-    };
-
-    public func createdInFuture(created_at_time: ?Nat64, metadata: Metadata): Bool {
-      switch (created_at_time, metadata.get("icrc7:permitted_drift")) {
-        case (?t, ?#Nat(d)) if(Nat64.toNat(t) > Time.now() + d) true else false;  
-        case(_, _) false; 
-      }
-    };
-
-    public func maxApprovals(test: Bool, size: Nat, metadata: Metadata): Bool {
-      switch (metadata.get("icrc37_max_approvals_per_token_or_collection"), test) {
-        case (?#Nat(m), true) size > m;
-        case(_, _) false; 
-      }
-    };
-
-    public func maxApprovalRevokes(count: Nat, metadata: Metadata): Bool {
-      switch (metadata.get("icrc37:max_revoke_approvals")) {
-        case (?#Nat(m)) count > m; 
-        case(_) false; 
-      }
-    };
-
-    public func exceedMaxSupply(ctx: TxnContext): Bool {
-      switch (ctx.metadata.get("icrc7:total_supply")) {
-        case (?#Nat(m)) ctx.totalSupply + 1 > m; 
-        case(_) false; 
-      }
-    };
-
-    public func icrc7_atomic_batch_transfers(ctx: TxnContext): Bool {
-      switch (ctx.metadata.get("icrc7:atomic_batch_transfers")) {
-        case (?#Text("true")) true; 
-        case(_) false; 
-      }
-    };
+    
 
     public func findApproval(approvals :[ApprovalInfo], spender: Account): Bool {
       let time = Nat64.fromIntWrap(Time.now());
@@ -151,167 +82,271 @@ module {
       return false;
     };
 
-    public func approvalExists(approvalExists: ?{spender: Account; btype: Text}, accountRecord: ?AccountRecord, tokenApprovals: ?[ApprovalInfo]): Result.Result<(), ValidationError> {
-      let btype = switch(approvalExists, accountRecord, tokenApprovals){
-        case(?arg, _, ?approvals) {
-          if(findApproval(approvals, arg.spender)) return #ok() else arg.btype;
+    public func approvalExists(spender: ?Account, btype: ?{#TransferFrom; #Revoke}, accountRecord: ?AccountRecord, tokenApprovals: ?[ApprovalInfo]): Result.Result<(), ValidationError> {
+      let enum = switch(spender, btype, accountRecord, tokenApprovals){
+        case(?spender, ?btype, ?accountRecord, ?approvals) {
+          if(findApproval(Array.append(approvals, accountRecord.approvals), spender)) return #ok() else btype;
         };
-        case(?arg, ?account, null){
-          if(findApproval(account.approvals, arg.spender)) return #ok() else arg.btype;
+        case(?spender, ?btype, null, ?approvals) {
+          if(findApproval(approvals, spender)) return #ok() else btype;
+        };
+        case(?spender, ?btype, ?account, null){
+          if(findApproval(account.approvals, spender)) return #ok() else btype;
         };
         case(_) return #ok();
       };
-      return if(Text.equal(btype, "transfer")) #err(#StandardError(#Unauthorized)) else #err(#RevokeCollectionApprovalError(#ApprovalDoesNotExist));
+      return if(enum == #TransferFrom) #err(#StandardError(#Unauthorized)) else #err(#RevokeCollectionApprovalError(#ApprovalDoesNotExist));
     };
 
-    func automaticity(err: ?ValidationError, ok: Intent, ctx: TxnContext, arg:  ValidationArg): ValidationOutcome {
-        switch(err){
-            case(null) return #ok((arg.arg, ok));
-            case(?error) return if(icrc7_atomic_batch_transfers(ctx)) #err(#Automic) else #err(error);
+    func automaticity(err: ?ValidationError, ok: ?Intent, ctx: TxnContext): ValidationOutcome {
+        switch(err, ok){
+            case(null, ?ok) return #ok(ok);
+            case(?error, _) return if(Meta.icrc7_atomic_batch_transfers(ctx)) #err(#Automic) else #err(error);
+            case(null, null) return #err(#LogicError);
         };
     };
 
     func verifyAccount(accountRecord: ?AccountRecord, arg: ValidationArg, ctx: TxnContext, lastErr: ?ValidationError):ValidationOutcome {
-       var ok : Intent = #Caller(arg.caller);
+       let ok = createIntent(arg, null, accountRecord);
        var err = lastErr;
-        switch(accountRecord){
+       switch(accountRecord){
             case(null) err := ?#RevokeCollectionApprovalError(#ApprovalDoesNotExist);
             case(?account) {
-              if(maxApprovals(arg.maxApprovals, account.approvals.size(), ctx.metadata)) err := ?#BaseError(#GenericError{error_code= 100; message = "Exceeds max allowances per collection"});
-              switch(approvalExists(arg.approvalExists, ?account, null)){case(#ok()) ok := #Account(arg.caller, account); case(#err(e)) err := ?e};
+              if(Meta.maxApprovals(arg.maxApprovals, account.approvals.size(), ctx.metadata)) err := ?#BaseError(#GenericError{error_code= 100; message = "Exceeds max allowances per collection"});
+              switch(approvalExists(arg.spender, arg.approvalExists, accountRecord, null)){case(#err(e)) err := ?e; case(_){}};
             };
           };
-        return automaticity(err, ok, ctx, arg);
+        return automaticity(err, ok, ctx);
+    };
+
+    func createIntent(validation: ValidationArg, tokenRecord: ?TokenRecord, accountRecord: ?AccountRecord): ?Intent {
+      switch(validation.arg, tokenRecord, accountRecord){
+        case(#Burn(arg), ?token, _) ?#Burn(arg, validation.caller, token);
+        case(#Transfer(arg), ?token, _) ?#Transfer(arg, validation.caller, token);
+        case(#ApproveToken(arg), ?token, _) ?#ApproveToken(arg, validation.caller, token);
+        case(#RevokeToken(arg), ?token, _) ?#RevokeToken(arg, validation.caller, token);
+        case(#TransferFrom(arg), ?token, _) ?#TransferFrom(arg, validation.caller, token);
+        case(#UpdateMetadata(arg), ?token, _) ?#UpdateMetadata(arg, validation.caller, token);
+        case(#ApproveCollection(arg), _, ?account) ?#ApproveCollection(arg, validation.caller, account);
+        case(#RevokeCollection(arg), _, ?account) ?#RevokeCollection(arg, validation.caller, account);
+        case(#Mint(arg), null, null) ?#Mint(arg, validation.caller);
+        case(_)null;
+      }
     };
 
     func verifyToken(tokenRecord: ?TokenRecord, arg: ValidationArg, ctx: TxnContext, lastErr: ?ValidationError):ValidationOutcome {
-       var ok : Intent = #Caller(arg.caller);
+       var ok = createIntent(arg, tokenRecord, null);
        var err = lastErr;
         switch(tokenRecord){
-            case(null) return #err(#StandardError(#NonExistingTokenId));
+            case(null) err := ?#StandardError(#NonExistingTokenId);
             case(?token){
               if(verifyNullableAccounts(?token.owner, ?arg.caller, false)) err := ?#StandardError(#Unauthorized);
-              if(maxApprovals(arg.maxApprovals, token.approvals.size(), ctx.metadata)) err := ?#BaseError(#GenericError{error_code= 100; message = "Exceeds max allowances per token"});
-              switch(approvalExists(arg.approvalExists, ctx.accounts.get(token.owner), ?token.approvals)){case(#ok()) ok := #Token(arg.caller, token); case(#err(e)) err := ?e};
+              if(Meta.maxApprovals(arg.maxApprovals, token.approvals.size(), ctx.metadata)) err := ?#BaseError(#GenericError{error_code= 100; message = "Exceeds max allowances per token"});
+              switch(approvalExists(arg.spender, arg.approvalExists, ctx.accounts.get(token.owner), ?token.approvals)){case(#ok()){}; case(#err(e)) err := ?e;};
             };
         };
-        return automaticity(err, ok, ctx, arg);
+        return automaticity(err, ok, ctx);
     };
 
     func verifyAdmin(account: Account, arg: ValidationArg, ctx: TxnContext, lastErr: ?ValidationError):ValidationOutcome {
-        var ok : Intent = #Caller(arg.caller);
+        var ok = createIntent(arg, null, null);
         var err = lastErr;
         if(verifyNullableAccounts(?account, ?arg.caller, false)) err := ?#StandardError(#Unauthorized);
-        return automaticity(err, ok, ctx, arg);
+        return automaticity(err, ok, ctx);
     };
 
-
-    public func verify(arg: ValidationArg, ctx: TxnContext): ValidationOutcome {
-      var ok : Intent = #Caller(arg.caller);
-      var error : ?ValidationError = null;
-      if (createdInFuture(arg.created_at_time, ctx.metadata)) error := ?#BaseError(#CreatedInFuture { ledger_time = Nat64.fromIntWrap(Time.now()) });
-      if (tooOld(arg.created_at_time, ctx.metadata)) error := ?#BaseError(#TooOld);
-      if (verifyNullableAccounts(?arg.caller, arg.recipient, false)) error := ?#TransferError(#InvalidRecipient);
-      if(memoTooLarge(arg.memo, ctx.metadata)) error := ?#BaseError(#GenericError{error_code = 200; message = "Memo too large"});
-      if (verifyNullableAccounts(?arg.caller, arg.spender, false)) error := ?#ApproveCollectionError(#InvalidSpender);  // Can't approve self
-      if(arg.minting and exceedMaxSupply(ctx)) error := ?#MintError(#ExceedsMaxSupply);
-      
-      return switch(arg.authorized){
-        case(?#Account(accountRecord)) verifyAccount(accountRecord, arg, ctx, error);
-        case(?#Token(tokenRecord)) verifyToken(tokenRecord, arg, ctx, error);
-        case(?#Admin(account)) verifyAdmin(account, arg, ctx, error);
-        case(_) automaticity(error, ok, ctx, arg);
-      } 
-    };
-
-    public func validate<T <: BaseArg>(arg: Arg, x: T, authorized: ?Authorized, spender: ?Account, caller: Principal, ctx: TxnContext, count: Nat):  ValidationResult {
-      if(maxUpdate(count, ctx.metadata)) return #err(#GenericError{error_code = 500; message = "Exceeds max update size"});
-      let validationArg : ValidationArg = {
-        arg;
-        created_at_time = x.created_at_time;
-        spender = spender;
-        memo = x.memo;
-        caller = {owner = caller; subaccount = x.from_subaccount};
-        recipient = switch(arg){case(#Transfer(arg)) ?arg.to; case(#TransferFrom(arg)) ?arg.to; case(_) null};
-        authorized;
-        minting = switch(arg){case(#Mint(arg)) true; case(_) false};
-        maxApprovals = switch(arg){case(#ApproveToken(arg)) true; case(#ApproveCollection(arg)) true; case(_) false};
-        approvalExists = switch(arg, spender){case(#RevokeToken(arg), ?spender) ?{spender = spender; btype = "revoke"}; case(#TransferFrom(arg), ?spender) ?{spender = spender; btype = "transfer"}; case(#RevokeCollection(arg), ?spender) ?{spender = spender; btype = "revoke"}; case(_) null};
-      };
-
-      switch(verify(validationArg, ctx)){
-        case(#ok(result)) return #ok(#ok(result));
-        case(#err(#Automic)) return #err(#GenericBatchError{error_code = 500; message = "element "#Nat.toText(count)#" failed validation"});
-        case(#err(e)) return #ok(#err(e));
-      };
-    };
-
-  
+  public func verify(arg: ValidationArg, ctx: TxnContext): ValidationOutcome {
+    var error : ?ValidationError = null;
+    if (Meta.createdInFuture(arg.created_at_time, ctx.metadata)) error := ?#BaseError(#CreatedInFuture { ledger_time = Nat64.fromIntWrap(Time.now()) });
+    if (Meta.tooOld(arg.created_at_time, ctx.metadata)) error := ?#BaseError(#TooOld);
+    if (verifyNullableAccounts(?arg.caller, arg.recipient, false)) error := ?#TransferError(#InvalidRecipient);
+    if(Meta.memoTooLarge(arg.memo, ctx.metadata)) error := ?#BaseError(#GenericError{error_code = 200; message = "Memo too large"});
+    if (verifyNullableAccounts(?arg.caller, arg.spender, false)) error := ?#ApproveCollectionError(#InvalidSpender);  // Can't approve self
+    if(arg.minting and Meta.exceedMaxSupply(ctx)) error := ?#MintError(#ExceedsMaxSupply);
     
-   
+    return switch(arg.authorized){
+      case(#Account(accountRecord)) verifyAccount(accountRecord, arg, ctx, error);
+      case(#Token(tokenRecord)) verifyToken(tokenRecord, arg, ctx, error);
+      case(#Admin(account)) verifyAdmin(account, arg, ctx, error);
+    } 
+  };
 
-    public func updateTokenRecordOnTransfer(tokens: TokenRecords, id: Nat, newOwner: Account, transactionType: TransactionType): TokenRecords {
-      switch(tokens.get(id)){
-        case(null){return tokens};
-        case(?record){
-          let updatedRecord : TokenRecord = {
-            owner = newOwner;
-            metadata = record.metadata;
-            history = Array.append(record.history, [(newOwner.owner, Time.now(), transactionType)]);
+  public func validate(arg: Arg, caller: Principal, ctx: TxnContext, count: Nat):  ValidationResult {
+    if(Meta.maxUpdate(count, ctx.metadata)) return #err(#GenericError{error_code = 500; message = "Exceeds max update size"});
+    let (from_subaccount, memo, created_at_time, spender, auth) = getSubaccountMemoAndTimeFromArg(arg, ctx, caller);
+    let validationArg : ValidationArg = {
+      arg;
+      created_at_time;
+      spender;
+      memo;
+      authorized = auth;
+      caller = {owner = caller; subaccount = from_subaccount};
+      recipient = switch(arg){case(#Transfer(arg)) ?arg.to; case(#TransferFrom(arg)) ?arg.to; case(_) null};
+      minting = switch(arg){case(#Mint(arg)) true; case(_) false};
+      maxApprovals = switch(arg){case(#ApproveToken(arg)) true; case(#ApproveCollection(arg)) true; case(_) false};
+      approvalExists = switch(arg){case(#RevokeToken(arg) or #RevokeCollection(arg)) ?#Revoke; case(#TransferFrom(arg)) ?#TransferFrom; case(_) null};
+    };
+    switch(verify(validationArg, ctx)){
+      case(#ok(result)) return #ok(#ok(result));
+      case(#err(#Automic)) return #err(#GenericBatchError{error_code = 500; message = "element "#Nat.toText(count)#" failed validation"});
+      case(#err(#LogicError)) return #err(#GenericBatchError{error_code = 600; message = "canister logic error"});
+      case(#err(e)) return #ok(#err(e));
+    };
+  };
+
+  func getSubaccountMemoAndTimeFromArg(arg: Arg, ctx: TxnContext, caller: Principal): (?Blob, ?Blob, ?Nat64, ?Account, Authorized) {
+    //Indented to improve readability (from_subaccount, memo, created_at_time, spender, auth)
+    switch(arg){
+      case(#Mint(arg))              (arg.from_subaccount,                 arg.memo,               arg.created_at_time,                null,                                                   #Admin({owner = ctx.admin; subaccount = arg.from_subaccount})); 
+      case(#Burn(arg))              (arg.from_subaccount,                 arg.memo,               arg.created_at_time,                null,                                                   #Token(ctx.tokens.get(arg.token_id))); 
+      case(#Transfer(arg))          (arg.from_subaccount,                 arg.memo,               arg.created_at_time,                null,                                                   #Token(ctx.tokens.get(arg.token_id))); 
+      case(#ApproveCollection(arg)) (arg.approval_info.from_subaccount,   arg.approval_info.memo, ?arg.approval_info.created_at_time, ?arg.approval_info.spender,                             #Account(ctx.accounts.get({owner = caller; subaccount = arg.approval_info.from_subaccount}))); 
+      case(#ApproveToken(arg))      (arg.approval_info.from_subaccount,   arg.approval_info.memo, ?arg.approval_info.created_at_time, ?arg.approval_info.spender,                             #Token(ctx.tokens.get(arg.token_id))); 
+      case(#RevokeCollection(arg))  (arg.from_subaccount,                 arg.memo,               arg.created_at_time,                arg.spender,                                            #Account(ctx.accounts.get({owner = caller; subaccount = arg.from_subaccount}))); 
+      case(#RevokeToken(arg))       (arg.from_subaccount,                 arg.memo,               arg.created_at_time,                arg.spender,                                            #Token(ctx.tokens.get(arg.token_id))); 
+      case(#TransferFrom(arg))      (arg.spender_subaccount,              arg.memo,               arg.created_at_time,                ?{owner = caller; subaccount = arg.spender_subaccount}, #Token(ctx.tokens.get(arg.token_id))); 
+      case(#UpdateMetadata(arg))    (arg.from_subaccount,                 arg.memo,               arg.created_at_time,                null,                                                   #Token(ctx.tokens.get(arg.token_id)));
+    };
+  };
+
+  public func batchExecute<A, R>(args: [A], ctx: TxnContext, caller: Principal, toArg: (A) -> Arg, handleValidationError: (ValidationError) -> ?R, wrapSuccess: (Nat) -> ?R): ([?R], TxnContext) {
+    var results = Buffer.Buffer<?R>(args.size());
+    var updatedCtx = ctx;
+
+    for (i in Iter.range(0, args.size())) {
+      switch (validate(toArg(args[i]), caller, updatedCtx, i)) {
+        case (#err(e)) return ([handleValidationError(#BaseError(e))], ctx); // still returns R because you wrap early
+        case (#ok(#err(error))) results.add(handleValidationError(error));
+        case (#ok(#ok(intent))) {
+          updatedCtx := updateState(intent, updatedCtx);
+          results.add(wrapSuccess(updatedCtx.index));
+        };
+      }
+    };
+
+    return (Iter.toArray(results.vals()), updatedCtx);
+  };
+
+   func mintNewToken(arg: MintArg): TokenRecord {
+      {
+        owner = arg.to;
+        metadata = arg.meta;
+        approvals = [];
+      }
+    };
+
+      func appendOrUpdateApprovalInfo(newApproval: ApprovalInfo, arr: [ApprovalInfo]): [ApprovalInfo] {
+        let indexOpt = Array.indexOf<ApprovalInfo>(
+            newApproval,
+            arr,
+            func (a, b) { a.spender == b.spender }
+        );
+    
+        switch (indexOpt) {
+            case (null) return Array.append(arr, [newApproval]);
+            case (_)    return Array.map<ApprovalInfo, ApprovalInfo>(arr, func (a) {
+                if (a.spender == newApproval.spender) newApproval else a
+            });
+        };
+    };
+
+      func addOrUpdateCollectionApproval(arg: ApproveCollectionArg, accountRecord: ?AccountRecord): AccountRecord {
+      switch(accountRecord){
+          case(?account){
+              {account with approvals = appendOrUpdateApprovalInfo(arg.approval_info, account.approvals)};
+          };
+          case(null){
+            {
+              balance = 0;
+              owned_tokens = [];
+              approvals = [arg.approval_info];
+            };
+          }
+      }
+    };
+
+    public func removeApproval(approvals: [ApprovalInfo], spender: ?Account): [ApprovalInfo]{
+        let remainingApprovals = Buffer.Buffer<ApprovalInfo>(approvals.size());
+        for(approval in approvals.vals()){
+            if(verifyNullableAccounts(spender, ?approval.spender, true)){
+                remainingApprovals.add(approval);
+            };
+        };
+        Iter.toArray(remainingApprovals.vals());
+    };
+
+    public func updateState(intent: Intent, ctx: TxnContext): TxnContext {
+      switch(intent){
+        case(#Transfer(arg, caller, token)){
+          ctx.tokens.put(arg.token_id, {token with owner = arg.to; approvals = []});
+          ctx.accounts.put(arg.to, updateAccountRecordsOnTransfer(ctx.accounts.get(arg.to), arg.token_id, #Receive));
+          ctx.accounts.put(caller, updateAccountRecordsOnTransfer(ctx.accounts.get(caller), arg.token_id, #Send));
+        };
+        case(#Mint(arg, _)){
+          ctx.tokens.put(ctx.totalSupply, mintNewToken(arg));
+          ctx.accounts.put(arg.to, updateAccountRecordsOnTransfer(ctx.accounts.get(arg.to), ctx.totalSupply, #Receive));
+          ctx.totalSupply := ctx.totalSupply + 1;
+        };
+        case(#Burn(arg, _, token)){
+          ctx.tokens.delete(arg.token_id);
+          ctx.accounts.put(token.owner, updateAccountRecordsOnTransfer(ctx.accounts.get(token.owner), arg.token_id, #Send));
+          ctx.totalSupply := ctx.totalSupply - 1;
+        };
+        case(#TransferFrom(arg, _, token)){
+          ctx.tokens.put(arg.token_id, {token with owner = arg.to; approvals = []});
+          ctx.accounts.put(arg.to, updateAccountRecordsOnTransfer(ctx.accounts.get(arg.to), arg.token_id, #Receive));
+          ctx.accounts.put(arg.from, updateAccountRecordsOnTransfer(ctx.accounts.get(arg.from), arg.token_id, #Send));
+        };
+        case(#ApproveToken(arg, _, token)) ctx.tokens.put(arg.token_id, {token with approvals = appendOrUpdateApprovalInfo(arg.approval_info, token.approvals)});
+        case(#ApproveCollection(arg, callerAccount, accountRecord)) ctx.accounts.put(callerAccount, addOrUpdateCollectionApproval(arg, ?accountRecord));
+        case(#RevokeToken(arg, _, token)) ctx.tokens.put(arg.token_id, {token with approvals = removeApproval(token.approvals, arg.spender)});
+        case(#RevokeCollection(arg, callerAccount, account)) ctx.accounts.put(callerAccount, {account with approvals = removeApproval(account.approvals, arg.spender)});
+        case(#UpdateMetadata(arg, _, token)) ctx.tokens.put(arg.token_id, {token with metadata = Array.append(token.metadata, [(arg.key, arg.value)])});
+      };
+      Ledger.updateLedger(intent, ctx);
+    };
+
+    public func updateAccountRecordsOnTransfer(account: ?AccountRecord, tokenId: Nat, transactionType: TransactionType): AccountRecord {
+      switch(account, transactionType){
+        case(null, #Receive){
+          {
+            balance =  1;
+            owned_tokens = [tokenId];
             approvals = [];
           };
-          tokens.put(id, updatedRecord);
-          return tokens;
-        }
-      };
-    };
-
-    public func updateAccountRecord(record: AccountRecord, tokenId: Nat, transactionType: TransactionType): AccountRecord {
-      switch(transactionType){
-        case(#Receive or #Mint){
+        };
+        case(?record, #Receive){
           {
             balance = record.balance + 1;
             owned_tokens = Array.append(record.owned_tokens, [tokenId]);
             approvals = record.approvals;
           }
         };
-        case(#Send or #Burn){
+        case(?record, #Send){
           {
             balance = if (record.balance <= 0) 0 else Nat.sub(record.balance, 1);
             owned_tokens = Array.filter<(Nat)>(record.owned_tokens, func(k) {k != tokenId});
             approvals = record.approvals;
           };
         };
-        case(_){record};
-      };
-    };
-
-    public func updateAccountRecordsOnTransfer(accountBalances: AccountRecords, account: Account, tokenId: Nat, transactionType: TransactionType): AccountRecords {
-      switch(accountBalances.get(account)){
-        case(null){
-          let newRecord : AccountRecord = {
-            balance = if(transactionType == #Receive or transactionType == #Mint) 1 else 0;
-            owned_tokens = [tokenId];
+        case(null, #Send){
+          {
+            balance =  0;
+            owned_tokens = [];
             approvals = [];
           };
-          accountBalances.put(account, newRecord);
-          return accountBalances;
         };
-        case(?record){
-          accountBalances.put(account, updateAccountRecord(record, tokenId, transactionType));
-          return accountBalances;
-        };
-      }
+      };
     };
 
     public func takeSubArray<T>(prev: ?Nat, take: ?Nat, arr: [T], metadata: Metadata): [T] {
       let startIndex = Option.get(prev, 0);
       if (startIndex >= arr.size()) return [];
 
-      let requestedTake = getTake(take, arr.size(), metadata);
+      let requestedTake = Meta.getTake(take, arr.size(), metadata);
 
       let available = Nat.sub(arr.size(), startIndex);
-      let finalTake = Nat.min(getMaxTake(requestedTake, metadata), available);
+      let finalTake = Nat.min(Meta.getMaxTake(requestedTake, metadata), available);
 
       return Array.subArray<T>(arr, startIndex, finalTake);
     };
