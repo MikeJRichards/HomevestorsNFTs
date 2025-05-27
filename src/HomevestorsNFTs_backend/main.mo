@@ -1,36 +1,21 @@
-  //icrc7_collection_metadata : () -> (vec record { text; Value } ) query;
-  //icrc7_symbol : () -> (text) query;
-  //icrc7_name : () -> (text) query;
-  //icrc7_description : () -> (opt text) query;
-  //icrc7_logo : () -> (opt text) query; --- Notes must match metadata - when I add an image change this
-  //icrc7_total_supply : () -> (nat) query; --- Notes this returns the var totalSupply, update this as / if we mint - metadata returns the same var
-  //icrc7_supply_cap : () -> (opt nat) query; --- notes must match metadata -- i"ve set to null
-  //icrc7_max_query_batch_size : () -> (opt nat) query; --- notes must match metadata - I've set to null
-  //icrc7_max_update_batch_size : () -> (opt nat) query; --- notes must match metadata - I've set to null
-  //icrc7_default_take_value : () -> (opt nat) query; --- notes must match metadata - I've set to null
-  //icrc7_max_take_value : () -> (opt nat) query;--- notes must match metadata - I've set to null
-  //icrc7_max_memo_size : () -> (opt nat) query;--- notes must match metadata - I've set to null
-  //icrc7_atomic_batch_transfers : () -> (opt bool) query; --- notes must match metadata - I've set to null
-  //icrc7_tx_window : () -> (opt nat) query; --- notes must match metadata - I've set to null
-  //icrc7_permitted_drift : () -> (opt nat) query;  --- notes must match metadata - I've set to null
-  //icrc7_token_metadata : (token_ids : vec nat) -> (vec opt vec record { text; Value }) query; - Implemented the most basic possible version - without external state
-  //icrc7_owner_of : (token_ids : vec nat) -> (vec opt Account) query; ---notes implemented most basic possible version - no state
-  //icrc7_balance_of : (vec Account) -> (vec nat) query; --- Interestingly is batch compatable and takes in and returns array - a balance of each account queried
-  //icrc7_tokens : (prev : opt nat, take : opt nat) -> (vec nat) query; - very minimal but correct implementation for 1 nft
-  //icrc7_tokens_of : (account : Account, prev : opt nat, take : opt nat) -> (vec nat) query; - very minimal but correct implementation for 1 nft
-  //icrc7_transfer : (vec TransferArg) -> (vec opt TransferResult);
-
-
 import Types "./types";
 import Utils "utils";
 import ICRC7 "icrc7";
+import ICRC10 "icrc10";
 import ICRC37 "icrc37";
+import ICRC3 "icrc3";
 import Metadata "metadata";
+import ELog "errorlogging";
+import Ledger "ledger";
 import Principal "mo:base/Principal";
 import HashMap "mo:base/HashMap";
 import Nat "mo:base/Nat";
 import Text "mo:base/Text";
 import Iter "mo:base/Iter";
+import CertTree "mo:ic-certification/CertTree";
+import Buffer "mo:base/Buffer";
+import Blob "mo:base/Blob";
+
 
 actor {
   type Account = Types.Account;
@@ -62,23 +47,40 @@ actor {
   type MintResult = Types.MintResult;
   type TxnContext = Types.TxnContext;
   type SupportedStandards = Types.SupportedStandards;
+  type Error = Types.Error;
+  type Arg = Types.Arg;
+  type ValidationError = Types.ValidationError;
+  type ArgFlag = Types.ArgFlag;
+  type ValidationErrorFlag = Types.ValidationErrorFlag;
+  type DataCertificate = Types.DataCertificate;
+  type BlockValue = Types.BlockValue;
+  type GetArchivesArgs = Types.GetArchivesArgs;
+  type GetArchivesResult = Types.GetArchivesResult;
+  type GetBlocksArgs = Types.GetBlocksArgs;
+  type GetBlocksResult = Types.GetBlocksResult;
 
   var ctx : TxnContext = {
     var index = 0;
     var tokens = HashMap.HashMap<Nat, TokenRecord>(0, Nat.equal, Utils.natToHash);
-    var ledger = HashMap.HashMap<Nat, Block>(0, Nat.equal, Utils.natToHash);
+    var ledger = Buffer.Buffer<BlockValue>(0);
     var accounts = HashMap.HashMap<Account, AccountRecord>(0, Utils.accountEqual, Utils.accountHash);
     var totalSupply = 0;
     var metadata = HashMap.HashMap<Text, Value>(0, Text.equal, Text.hash);
+    var errors = HashMap.HashMap<Nat, Error>(0, Nat.equal, Utils.natToHash);
+    var phash = Blob.fromArray([]);
+    var cert = CertTree.newStore(); 
+    //CertTree.Ops(CertTree.newStore());
     admin = Principal.fromText("vq2za-kqaaa-aaaas-amlvq-cai");
   };
 
-  
+  stable var stableCert = CertTree.newStore();
+  stable var stablePhash = Blob.fromArray([]);
   stable var propertyId = 0;
   stable var stableTokenRecords : [(Nat, TokenRecord)] = [];
   stable var stableAccountRecords :[(Account, AccountRecord)] = [];
   stable var stableMetadata : [(Text, Value)] = [];
-  stable var stableLedger : [(Nat, Block)] = [];
+  stable var stableLedger : [BlockValue] = [];
+  stable var stableErrors : [(Nat, Error)] = [];
   stable var stableTotalSupply = 0;
   stable var stableIndex = 0;
 
@@ -296,31 +298,63 @@ actor {
     return results;
   };
 
-  public query func icrc7_supported_standards() : async [SupportedStandards] {
-    ICRC37.supported_standards();
+  public query func icrc10_supported_standards() : async [SupportedStandards] {
+    ICRC10.supported_standards();
   };
+
+  public query func getErrors(start: ?Nat, take: ?Nat, argType: ?ArgFlag, errorType: ?ValidationErrorFlag): async [Error]{
+    ELog.getErrors(start, take, argType, errorType, ctx);
+  };
+
+  //////////////////////////////////////
+  //////ICRC3
+  //////////////////////////////////////
+  public query func icrc3_supported_block_types(): async [{ block_type: Text; url: Text }] {
+    ICRC3.icrc3_supported_block_types();
+  };
+
+  public query func icrc3_get_archives(arg: GetArchivesArgs): async [GetArchivesResult] {
+    return [];
+  };
+
+  public query func icrc3_get_tip_certificate(): async ?DataCertificate {
+    ICRC3.icrc3_get_tip_certificate(ctx.cert);
+  };
+
+  public query func icrc3_get_blocks(arg: GetBlocksArgs): async GetBlocksResult{
+    Ledger.icrc3_get_blocks(arg, ctx, Utils.takeSubArray);
+  };
+
+  
 
   
   system func preupgrade(){
     stableTokenRecords := Iter.toArray(ctx.tokens.entries());
     stableAccountRecords := Iter.toArray(ctx.accounts.entries());
     stableMetadata := Iter.toArray(ctx.metadata.entries());
-    stableLedger := Iter.toArray(ctx.ledger.entries());
+    stableLedger := Iter.toArray(ctx.ledger.vals());
+    stableErrors := Iter.toArray(ctx.errors.entries());
     stableTotalSupply := ctx.totalSupply;
     stableIndex := ctx.index;
+    stableCert := ctx.cert;
+    stablePhash := ctx.phash;
   };
 
   system func postupgrade (){
     ctx.tokens :=  HashMap.fromIter(stableTokenRecords.vals(), 0, Nat.equal, Utils.natToHash);
     ctx.accounts := HashMap.fromIter(stableAccountRecords.vals(), 0, Utils.accountEqual, Utils.accountHash);
     ctx.metadata := HashMap.fromIter(stableMetadata.vals(), 0, Text.equal, Text.hash);
-    ctx.ledger := HashMap.fromIter(stableLedger.vals(), 0, Nat.equal, Utils.natToHash);
+    ctx.ledger := Buffer.fromArray<BlockValue>(stableLedger);
+    ctx.errors := HashMap.fromIter(stableErrors.vals(), 0, Nat.equal, Utils.natToHash);
     ctx.totalSupply := stableTotalSupply;
     ctx.index := stableIndex;
+    ctx.cert := stableCert;
+    ctx.phash := stablePhash;
     stableTokenRecords := [];
     stableAccountRecords := [];
     stableMetadata := [];
     stableLedger := [];
+    stableErrors := [];
     stableIndex := 0;
     stableTotalSupply := 0;
   };

@@ -1,10 +1,12 @@
 import Types "types";
+import ICRC3 "icrc3";
 import Text "mo:base/Text";
 import Time "mo:base/Time";
 import Nat "mo:base/Nat";
 import Nat64 "mo:base/Nat64";
 import Int "mo:base/Int";
 import Option "mo:base/Option";
+import Buffer "mo:base/Buffer";
 
 module {
     type Account = Types.Account;
@@ -21,18 +23,30 @@ module {
     type Arg = Types.Arg;
     type Intent = Types.Intent;
     type TxnContext = Types.TxnContext;
+    type GetBlocksArgs = Types.GetBlocksArgs;
+    type GetBlocksResult = Types.GetBlocksResult;
+    type Metadata = Types.Metadata;
+    type BlockValue = Types.BlockValue;
 
+    public func createBlock(intent: Intent, ctx: TxnContext): Block {
+        {
+            phash = ctx.phash;
+            btype = createBtype(intent);
+            ts = Int.abs(Time.now());
+            tx = createTX(intent, ctx.totalSupply);
+        };
+    };
     
 
     public func updateLedger(intent: Intent, ctx: TxnContext): TxnContext {
-        let block = {
-             btype = createBtype(intent);
-             ts = Int.abs(Time.now());
-             tx = createTX(intent, ctx.totalSupply);
-        };
+        let block = createBlock(intent, ctx);
+        let valueBlock = ICRC3.blockToValue(block); 
+        let hashBlock =  ICRC3.hashValue(valueBlock);
+        ICRC3.certifyTip(ctx.index, hashBlock, ctx);
         ctx.index += 1;
-        ctx.ledger.put(ctx.index, block);
-        return ctx;
+        ctx.phash := hashBlock;
+        ctx.ledger.add({id = ctx.index; block = valueBlock});
+        ctx;
     };
 
     func createTX(intent: Intent, tid: Nat): Tx {
@@ -164,6 +178,15 @@ module {
             memo = arg.memo;
             ts = Option.map<Nat64, Nat>(arg.created_at_time, Nat64.toNat);
         };
+    };
+
+    public func icrc3_get_blocks(arg: GetBlocksArgs, ctx: TxnContext, sub: <T>(prev: ?Nat, take: ?Nat, arr: [T], metadata: Metadata) -> [T]): GetBlocksResult{
+        let arr = Buffer.toArray(ctx.ledger);
+        return {
+          log_length = ctx.index;
+          blocks = sub<BlockValue>(?arg[0].start, ?arg[0].length, arr, ctx.metadata);
+          archived_blocks = [];
+        }
     };
 
 

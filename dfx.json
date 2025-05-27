@@ -8,7 +8,8 @@
   "defaults": {
     "build": {
       "args": "",
-      "packtool": ""
+      "packtool": "mops sources",
+      "build": "mops install"
     }
   },
   "output_env_file": ".env",

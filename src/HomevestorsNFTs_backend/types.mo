@@ -1,6 +1,8 @@
 import HashMap "mo:base/HashMap";
 import Result "mo:base/Result";
 import Nat "mo:base/Nat";
+import CertTree "mo:ic-certification/CertTree";
+import Buffer "mo:base/Buffer";
 
 module {
     public type TxnContext = {
@@ -10,7 +12,18 @@ module {
       var ledger: Blocks;
       var accounts: AccountRecords;
       var metadata: Metadata;
+      var errors : HashMap.HashMap<Nat, Error>;
+      var phash: Blob;
+      var cert : CertTree.Store;
       admin: Principal;
+    };
+
+    public type Error = {
+        id: Nat;
+        arg: Arg;
+        error: ValidationError;
+        time: Nat64;
+        caller: Principal;
     };
 
     public type Subaccount = Blob;
@@ -35,10 +48,46 @@ module {
     };
 
     
+    public type BlockValue = {
+        id: Nat;
+        block: Value;
+    };
+
+    public  type GetArchivesResult = [{
+        canister_id : Principal; // The id of the archive
+        start : Nat; // The first block in the archive
+        end : Nat; // The last block in the archive
+    }];
+
+  public type GetArchivesArgs = {
+    // The last archive seen by the client.
+    // The Ledger will return archives coming
+    // after this one if set, otherwise it
+    // will return the first archives.
+    from : ?Principal;
+  };
+
+  public type GetBlocksArgs = [{ 
+    start : Nat; 
+    length : Nat; 
+  }];
+
+
+  public type GetBlocksResult = {
+    // Total number of blocks in the
+    // block log
+    log_length : Nat;
+    blocks : [{ id : Nat; block: Value }];
+    archived_blocks : [{
+        args : GetBlocksArgs;
+        callback : query GetBlocksArgs -> async GetBlocksResult;
+    }];
+  };
 
     
 
     public type Block = {
+        phash: Blob;
         btype : Text;
         ts: Nat;
         tx: Tx;
@@ -99,6 +148,18 @@ module {
       #RevokeToken : RevokeTokenApprovalArg;
       #TransferFrom : TransferFromArg;
       #UpdateMetadata: TokenMetadataArg;
+    };
+
+    public type ArgFlag = {
+        #Mint;
+        #Burn;
+        #Transfer;
+        #ApproveCollection;
+        #ApproveToken;
+        #RevokeCollection;
+        #RevokeToken;
+        #TransferFrom;
+        #UpdateMetadata;
     };
 
     public type Intent = {
@@ -162,6 +223,12 @@ module {
     public type RevokeTokenApprovalArg = RevokeCollectionApprovalArg and {
         token_id : Nat;
     };
+
+    public type DataCertificate = {
+        certificate : Blob;
+        hash_tree : Blob;
+    };
+
 
  
 
@@ -244,6 +311,19 @@ module {
         #LogicError;
     };
 
+    public type ValidationErrorFlag = {
+        #TransferError;
+        #MintError;
+        #ApproveTokenError;
+        #RevokeTokenApprovalError;
+        #StandardError;
+        #BaseError;
+        #ApproveCollectionError;
+        #RevokeCollectionApprovalError;
+        #Automic;
+        #LogicError;
+    };
+
     public type ValidationOutcome = Result.Result<Intent, ValidationError>;
     public type ValidationResult = Result.Result<ValidationOutcome, BaseError>;
 
@@ -253,6 +333,11 @@ module {
       owner: Account;
       metadata: [(Text, Value)];
       approvals : [ApprovalInfo];
+    };
+
+    public type Result = {
+        #Ok: Block;
+        #Err: (Arg, ValidationError);
     };
 
 
@@ -370,7 +455,7 @@ module {
 
     public type TokenRecords = HashMap.HashMap<Nat, TokenRecord>;
     public type AccountRecords = HashMap.HashMap<Account, AccountRecord>;
-    public type Blocks = HashMap.HashMap<Nat, Block>;
+    public type Blocks = Buffer.Buffer<{id: Nat; block: Value}>;
     public type Metadata = HashMap.HashMap<Text, Value>;
 
 

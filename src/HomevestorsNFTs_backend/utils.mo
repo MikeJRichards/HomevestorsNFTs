@@ -1,6 +1,7 @@
 import Types "types";
 import Ledger "ledger";
 import Meta "metadata";
+import ELog "errorlogging";
 import Hash "mo:base/Hash";
 import Result "mo:base/Result";
 import Principal "mo:base/Principal";
@@ -13,6 +14,7 @@ import Option "mo:base/Option";
 import Array "mo:base/Array";
 import Buffer "mo:base/Buffer";
 import Iter "mo:base/Iter";
+
 module {
     type Account = Types.Account;
     type ApprovalInfo = Types.ApprovalInfo;
@@ -34,6 +36,9 @@ module {
     type MintArg = Types.MintArg;
     type ApproveCollectionArg = Types.ApproveCollectionArg;
     type Value = Types.Value;
+    type Error = Types.Error;
+    type ArgFlag = Types.ArgFlag;
+    type ValidationErrorFlag = Types.ValidationErrorFlag;
     
     public func accountEqual(a : Account, b : Account) : Bool {
          Principal.equal(a.owner, b.owner) and
@@ -215,8 +220,16 @@ module {
 
     for (i in Iter.range(0, args.size())) {
       switch (validate(toArg(args[i]), caller, updatedCtx, i)) {
-        case (#err(e)) return ([handleValidationError(#BaseError(e))], ctx); // still returns R because you wrap early
-        case (#ok(#err(error))) results.add(handleValidationError(error));
+        case (#err(e)) {
+          let id = updatedCtx.errors.size() + 1;
+          updatedCtx.errors.put(id, ELog.createError(id, toArg(args[i]), #BaseError(e), caller));
+          return ([handleValidationError(#BaseError(e))], ctx); // still returns R because you wrap early
+        }; 
+        case (#ok(#err(error))) {
+          let id = updatedCtx.errors.size() + 1;
+          updatedCtx.errors.put(id, ELog.createError(id, toArg(args[i]), error, caller));
+          results.add(handleValidationError(error));
+        };
         case (#ok(#ok(intent))) {
           updatedCtx := updateState(intent, updatedCtx);
           results.add(wrapSuccess(updatedCtx.index));
@@ -351,6 +364,7 @@ module {
       return Array.subArray<T>(arr, startIndex, finalTake);
     };
 
+    
 
 
 
