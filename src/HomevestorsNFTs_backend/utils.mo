@@ -214,8 +214,8 @@ module {
     };
   };
 
-  public func batchExecute<A, R>(args: [A], ctx: TxnContext, caller: Principal, toArg: (A) -> Arg, handleValidationError: (ValidationError) -> ?R, wrapSuccess: (Nat) -> ?R): ([?R], TxnContext) {
-    var results = Buffer.Buffer<?R>(args.size());
+  public func batchExecute<A, E>(args: [A], ctx: TxnContext, caller: Principal, toArg: (A) -> Arg, handleValidationError: (ValidationError) -> E): ([?{#Ok: Nat; #Err: E}], TxnContext) {
+    var results = Buffer.Buffer<?{#Ok: Nat; #Err: E}>(args.size());
     var updatedCtx = ctx;
 
     for (i in Iter.range(0, args.size())) {
@@ -223,16 +223,16 @@ module {
         case (#err(e)) {
           let id = updatedCtx.errors.size() + 1;
           updatedCtx.errors.put(id, ELog.createError(id, toArg(args[i]), #BaseError(e), caller));
-          return ([handleValidationError(#BaseError(e))], ctx); // still returns R because you wrap early
+          return ([?#Err(handleValidationError(#BaseError(e)))], ctx); // still returns R because you wrap early
         }; 
         case (#ok(#err(error))) {
           let id = updatedCtx.errors.size() + 1;
           updatedCtx.errors.put(id, ELog.createError(id, toArg(args[i]), error, caller));
-          results.add(handleValidationError(error));
+          results.add(?#Err(handleValidationError(error)));
         };
         case (#ok(#ok(intent))) {
           updatedCtx := updateState(intent, updatedCtx);
-          results.add(wrapSuccess(updatedCtx.index));
+          results.add(?#Ok(updatedCtx.index));
         };
       }
     };

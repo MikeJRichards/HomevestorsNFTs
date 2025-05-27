@@ -27,47 +27,47 @@ module ICRC7 {
     type TokenMetadataArg = Types.TokenMetadataArg;
     type StandardError = Types.StandardError;
 
-    public func handleMintValidationError(error: ValidationError): ?MintResult {
+    public func handleMintValidationError(error: ValidationError): MintError {
       switch(error){
-        case(#TransferError(e: MintError) or #BaseError(e: MintError) or #StandardError(e: MintError) or #MintError(e)) return ?#Err(e);
-        case(_) return ?#Err(#GenericError{error_code = 998; message = "invalid response";})
+        case(#TransferError(e: MintError) or #BaseError(e: MintError) or #StandardError(e: MintError) or #MintError(e)) return e;
+        case(_) return #GenericError{error_code = 998; message = "invalid response";}
       }
     };
 
-    public func handleTransferValidationError(error: ValidationError): ?TransferResult {
+    public func handleTransferValidationError(error: ValidationError): TransferError {
       switch(error){
-        case(#TransferError(e) or #BaseError(e: TransferError) or #StandardError(e: TransferError)) return ?#Err(e);
-        case(_) return ?#Err(#GenericError{error_code = 998; message = "invalid response";})
+        case(#TransferError(e) or #BaseError(e: TransferError) or #StandardError(e: TransferError)) return e;
+        case(_) return #GenericError{error_code = 998; message = "invalid response";}
+      }
+    };
+
+    public func handleMetadataUpdateValidationError(error: ValidationError): StandardError {
+      switch(error){
+        case(#BaseError(e: StandardError) or #StandardError(e)) return e;
+        case(_) return #GenericError{error_code = 998; message = "invalid response";}
       }
     };
     
     public func icrc7_transferHelper(args: [TransferArg], ctx: TxnContext, caller: Principal): ([?TransferResult], TxnContext) {
-      Utils.batchExecute<TransferArg, TransferResult>(args, ctx, caller, func(arg: TransferArg) { #Transfer(arg) },  handleTransferValidationError, func(index) { ?#Ok(index) });
+      Utils.batchExecute<TransferArg, TransferError>(args, ctx, caller, func(arg: TransferArg) { #Transfer(arg) },  handleTransferValidationError);
     };
 
    
 
     public func mintNFT(args: [MintArg], ctx: TxnContext, caller: Principal): ([?MintResult], TxnContext) {
-      let (results, updatedCtx) = Utils.batchExecute<MintArg, MintResult>(args, ctx, caller, func(arg: MintArg) { #Mint(arg) },  handleMintValidationError, func(index) { ?#Ok(index) });
+      let (results, updatedCtx) = Utils.batchExecute<MintArg, MintError>(args, ctx, caller, func(arg: MintArg) { #Mint(arg) },  handleMintValidationError);
       updatedCtx.metadata.put("icrc7:total_supply", #Nat(updatedCtx.totalSupply));
       return (results, updatedCtx);
     };
 
     public func burnNFT(args: [BurnArg], ctx: TxnContext, caller: Principal): ([?TransferResult], TxnContext) {
-      let (results, updatedCtx) = Utils.batchExecute<BurnArg, TransferResult>(args, ctx, caller, func(arg: BurnArg) { #Burn(arg) },  handleTransferValidationError, func(index) { ?#Ok(index) });
+      let (results, updatedCtx) = Utils.batchExecute<BurnArg, TransferError>(args, ctx, caller, func(arg: BurnArg) { #Burn(arg) },  handleTransferValidationError);
       updatedCtx.metadata.put("icrc7:total_supply", #Nat(updatedCtx.totalSupply));
       return (results, updatedCtx);
     };
 
-    public func handleMetadataUpdateValidationError(error: ValidationError): ?TokenMetadataResult {
-      switch(error){
-        case(#BaseError(e: StandardError) or #StandardError(e)) return ?#Err(e);
-        case(_) return ?#Err(#GenericError{error_code = 998; message = "invalid response";})
-      }
-    };
-
     public func updateTokenMetadata(args: [TokenMetadataArg], ctx: TxnContext, caller: Principal): ([?TokenMetadataResult], TxnContext) {
-      Utils.batchExecute<TokenMetadataArg, TokenMetadataResult>(args, ctx, caller, func(arg: TokenMetadataArg) { #UpdateMetadata(arg) },  handleMetadataUpdateValidationError, func(index) { ?#Ok(index) });
+      Utils.batchExecute<TokenMetadataArg, StandardError>(args, ctx, caller, func(arg: TokenMetadataArg) { #UpdateMetadata(arg) },  handleMetadataUpdateValidationError);
     };
 
     public func icrc7_owner_of(token_ids: [Nat], tokens: TokenRecords) : [ ?Account ] {
