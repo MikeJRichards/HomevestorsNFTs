@@ -7,6 +7,7 @@ import ICRC3 "icrc3";
 import Metadata "metadata";
 import ELog "errorlogging";
 import Ledger "ledger";
+import Tests "test";
 import Principal "mo:base/Principal";
 import HashMap "mo:base/HashMap";
 import Nat "mo:base/Nat";
@@ -16,7 +17,6 @@ import CertTree "mo:ic-certification/CertTree";
 import Buffer "mo:base/Buffer";
 import Blob "mo:base/Blob";
 
-
 actor {
   type Account = Types.Account;
   type Value = Types.Value;
@@ -25,8 +25,6 @@ actor {
   type TransferResult = Types.TransferResult;
   type AccountRecord = Types.AccountRecord;
   type TokenRecord = Types.TokenRecord;
-  type PropertyDetails = Types.PropertyDetails;
-  type CreateFinancialsArg = Types.CreateFinancialsArg;
   type ApproveTokenArg = Types.ApproveTokenArg;
   type ApproveTokenResult = Types.ApproveTokenResult;
   type ApproveCollectionArg = Types.ApproveCollectionArg;
@@ -58,6 +56,8 @@ actor {
   type GetArchivesResult = Types.GetArchivesResult;
   type GetBlocksArgs = Types.GetBlocksArgs;
   type GetBlocksResult = Types.GetBlocksResult;
+  type PropertyDetails = Types.PropertyDetails;
+  type CreateFinancialsArg = Types.CreateFinancialsArg;
 
   var ctx : TxnContext = {
     var index = 0;
@@ -70,12 +70,29 @@ actor {
     var phash = Blob.fromArray([]);
     var cert = CertTree.newStore(); 
     //CertTree.Ops(CertTree.newStore());
-    admin = Principal.fromText("vq2za-kqaaa-aaaas-amlvq-cai");
+    admin = {owner = Principal.fromText("vq2za-kqaaa-aaaas-amlvq-cai"); subaccount = null};
   };
+
+  public shared ({caller}) func clearState(): async (){
+    assert(Principal.equal(caller, ctx.admin.owner));
+    ctx := {
+      var index = 0;
+      var tokens = HashMap.HashMap<Nat, TokenRecord>(0, Nat.equal, Utils.natToHash);
+      var ledger = Buffer.Buffer<BlockValue>(0);
+      var accounts = HashMap.HashMap<Account, AccountRecord>(0, Utils.accountEqual, Utils.accountHash);
+      var totalSupply = 0;
+      var metadata = HashMap.HashMap<Text, Value>(0, Text.equal, Text.hash);
+      var errors = HashMap.HashMap<Nat, Error>(0, Nat.equal, Utils.natToHash);
+      var phash = Blob.fromArray([]);
+      var cert = CertTree.newStore(); 
+      //CertTree.Ops(CertTree.newStore());
+      admin = {owner = Principal.fromText("vq2za-kqaaa-aaaas-amlvq-cai"); subaccount = null};
+    }
+  };
+
 
   stable var stableCert = CertTree.newStore();
   stable var stablePhash = Blob.fromArray([]);
-  stable var propertyId = 0;
   stable var stableTokenRecords : [(Nat, TokenRecord)] = [];
   stable var stableAccountRecords :[(Account, AccountRecord)] = [];
   stable var stableMetadata : [(Text, Value)] = [];
@@ -83,27 +100,29 @@ actor {
   stable var stableErrors : [(Nat, Error)] = [];
   stable var stableTotalSupply = 0;
   stable var stableIndex = 0;
+  stable var propertyId = 0;
+
 
   public shared ({caller}) func initiateMetadata(id: Nat): async (){
-    assert(Principal.equal(caller, ctx.admin));
+    assert(Principal.equal(caller, ctx.admin.owner));
     propertyId := id;
     ctx.metadata := Metadata.initiateMetadata(ctx.metadata, ctx.totalSupply, propertyId);
   };
 
   public shared query ({caller}) func initiateProperty(): async (CreateFinancialsArg, PropertyDetails){
-    assert(Principal.equal(caller, ctx.admin));
+    assert(Principal.equal(caller, ctx.admin.owner));
     Metadata.createPropertyData(ctx.metadata);
   };
 
   public shared ({caller}) func updateCollectionMetadata(updates: [(Text, Value)]): async (){
-    assert(Principal.equal(caller, ctx.admin));
+    assert(Principal.equal(caller, ctx.admin.owner));
     for((key, value) in updates.vals()){
       ctx.metadata.put(key, value);
     };
   };
 
   public shared query ({caller}) func get_all_tokens(): async [(Nat, TokenRecord)] {
-    assert(Principal.equal(caller, ctx.admin));
+    assert(Principal.equal(caller, ctx.admin.owner));
     Iter.toArray(ctx.tokens.entries())
   };
 
@@ -116,14 +135,12 @@ actor {
   };
 
   public shared ({caller}) func exportState(): async ([(Nat, TokenRecord)], [(Account, AccountRecord)], [(Text, Value)]) {
-    assert(Principal.equal(caller, ctx.admin));
+    assert(Principal.equal(caller, ctx.admin.owner));
     (Iter.toArray(ctx.tokens.entries()), Iter.toArray(ctx.accounts.entries()), Iter.toArray(ctx.metadata.entries()))
   };
 
   public shared ({caller}) func updateTokenMetadata(args: [TokenMetadataArgs]): async [?TokenMetadataResult] {
-    let (results, updatedCtx) = ICRC7.updateTokenMetadata(args, ctx, caller); 
-    ctx := updatedCtx;
-    return results;
+    ICRC7.updateTokenMetadata(args, ctx, caller); 
   };  
 
   public shared ({caller}) func removeTokenMetadata(tokenId: Nat, key: Text): async (){
@@ -133,19 +150,15 @@ actor {
   // Mint new NFT
   
   public shared ({caller}) func mintNFT(args: [MintArg]) : async [?MintResult] {
-    let (results, updatedCtx) = ICRC7.mintNFT(args, ctx, caller);
-    ctx := updatedCtx;
-    return results;
+    ICRC7.mintNFT(args, ctx, caller);
   };
 
   public shared ({caller}) func burnNFT(arg: [BurnArg]): async [?TransferResult] {
-    let (results, updatedCtx) = ICRC7.burnNFT(arg, ctx, caller);
-    ctx := updatedCtx;
-    return results;
+    ICRC7.burnNFT(arg, ctx, caller);
   };
 
   public shared query ({caller}) func getAllAccountRecords(): async [(Account, AccountRecord)]{
-    assert(Principal.equal(caller, ctx.admin));
+    assert(Principal.equal(caller, ctx.admin.owner));
     Iter.toArray(ctx.accounts.entries());
   };
 
@@ -238,9 +251,24 @@ actor {
   };
 
   public shared ({caller}) func icrc7_transfer(transfers: [TransferArg]) : async [ ?TransferResult ] {
-    let (result, updatedCtx) = ICRC7.icrc7_transferHelper(transfers, ctx, caller);
-    ctx := updatedCtx;
-    return result;
+    ICRC7.icrc7_transferHelper(transfers, ctx, caller);
+  };
+
+  //Verify ICRC7 functions
+  public shared ({caller}) func verify_icrc7_transfer(args: [TransferArg]): async [?TransferResult]{
+    ICRC7.verify_icrc7_transfer(args, ctx, caller);
+  };
+
+  public shared ({caller}) func verify_icrc7_Mint(args: [MintArg]): async [?MintResult]{
+    ICRC7.verify_icrc7_Mint(args, ctx, caller);
+  };
+
+  public shared ({caller}) func verify_icrc7_Burn(args: [BurnArg]): async [?TransferResult]{
+    ICRC7.verify_icrc7_Burn(args, ctx, caller);
+  };
+
+  public shared ({caller}) func verifyTokenMetadata(args: [TokenMetadataArgs]): async [?TokenMetadataResult]{
+    ICRC7.verifyTokenMetadata(args, ctx, caller);
   };
 
 
@@ -257,27 +285,19 @@ actor {
   };
 
   public shared ({caller}) func icrc37_approve_tokens(args: [ApproveTokenArg]) : async [ ?ApproveTokenResult ] {
-    let (results, updatedCtx) = ICRC37.handleApproveTokenRecords(args, ctx, caller);
-    ctx := updatedCtx;
-    return results;
+    ICRC37.handleApproveTokenRecords(args, ctx, caller);
   };
 
   public shared ({caller}) func icrc37_approve_collection(args: [ApproveCollectionArg]) : async [ ?ApproveCollectionResult ] {
-    let (results, updatedCtx) = ICRC37.handleApproveCollection(args, ctx, caller);
-    ctx := updatedCtx;
-    return results;
+    ICRC37.handleApproveCollection(args, ctx, caller);
   };
 
   public shared ({caller}) func icrc37_revoke_token_approvals(args: [RevokeTokenApprovalArg]) : async [ ?RevokeTokenApprovalResponse ] {
-    let (results, updatedCtx) = ICRC37.handleRevokeTokenApprovals(args, ctx, caller);
-    ctx := updatedCtx;
-    return results;
+    ICRC37.handleRevokeTokenApprovals(args, ctx, caller);
   };
 
   public shared ({caller}) func icrc37_revoke_collection_approvals(args: [RevokeCollectionApprovalArg]) : async [ ?RevokeCollectionApprovalResult ] {
-    let (results, updatedCtx) = ICRC37.handleRevokeCollectionApproval(args, ctx, caller);
-    ctx := updatedCtx;
-    results;
+    ICRC37.handleRevokeCollectionApproval(args, ctx, caller);
   };
 
   public shared query ({caller}) func icrc37_is_approved(args: [IsApprovedArg]) : async [Bool] {
@@ -293,18 +313,33 @@ actor {
   };
 
   public shared ({caller}) func icrc37_transfer_from(args: [TransferFromArg]) : async [ ?TransferFromResult ] {
-    let (results, updatedCtx) = ICRC37.handleTransferFrom(args, ctx, caller);
-    ctx := updatedCtx;
-    return results;
+    ICRC37.handleTransferFrom(args, ctx, caller);
   };
 
-  public query func icrc10_supported_standards() : async [SupportedStandards] {
-    ICRC10.supported_standards();
+  /////////Verification Function ICRC37
+  public shared ({caller}) func verifyApproveTokenRecords(args: [ApproveTokenArg]): async [?ApproveTokenResult]{
+    ICRC37.verifyApproveTokenRecords(args, ctx, caller);
   };
 
-  public query func getErrors(start: ?Nat, take: ?Nat, argType: ?ArgFlag, errorType: ?ValidationErrorFlag): async [Error]{
-    ELog.getErrors(start, take, argType, errorType, ctx);
+  public shared ({caller}) func verifyApproveCollection(args: [ApproveCollectionArg]): async [?ApproveCollectionResult]{
+    ICRC37.verifyApproveCollection(args, ctx, caller);
   };
+
+  public shared ({caller}) func verifyRevokeTokenApprovals(args: [RevokeTokenApprovalArg]): async [?RevokeTokenApprovalResponse]{
+    ICRC37.verifyRevokeTokenApprovals(args, ctx, caller);
+  };
+
+  public shared ({caller}) func verifyRevokeCollectionApproval(args: [RevokeCollectionApprovalArg]): async [?RevokeCollectionApprovalResult]{
+    ICRC37.verifyRevokeCollectionApproval(args, ctx, caller);
+  };
+
+  public shared ({caller}) func verifyTransferFrom(args: [TransferFromArg]): async [?TransferFromResult]{
+    ICRC37.verifyTransferFrom(args, ctx, caller);
+  };
+
+
+
+ 
 
   //////////////////////////////////////
   //////ICRC3
@@ -313,7 +348,7 @@ actor {
     ICRC3.icrc3_supported_block_types();
   };
 
-  public query func icrc3_get_archives(arg: GetArchivesArgs): async [GetArchivesResult] {
+  public query func icrc3_get_archives(_: GetArchivesArgs): async [GetArchivesResult] {
     return [];
   };
 
@@ -323,6 +358,22 @@ actor {
 
   public query func icrc3_get_blocks(arg: GetBlocksArgs): async GetBlocksResult{
     Ledger.icrc3_get_blocks(arg, ctx, Utils.takeSubArray);
+  };
+
+  /////////////////////////////
+  ///////Tests
+  ///////////////////////////
+
+  public func runTests(arg: ?ArgFlag): async (){
+    Tests.runAllTests(arg);
+  };
+
+   public query func icrc10_supported_standards() : async [SupportedStandards] {
+    ICRC10.supported_standards();
+  };
+
+  public query func getErrors(start: ?Nat, take: ?Nat, argType: ?ArgFlag, errorType: ?ValidationErrorFlag): async [Error]{
+    ELog.getErrors(start, take, argType, errorType, ctx);
   };
 
   

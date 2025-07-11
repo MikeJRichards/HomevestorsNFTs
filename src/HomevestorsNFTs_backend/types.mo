@@ -15,7 +15,7 @@ module {
       var errors : HashMap.HashMap<Nat, Error>;
       var phash: Blob;
       var cert : CertTree.Store;
-      admin: Principal;
+      admin: Account;
     };
 
     public type Error = {
@@ -154,17 +154,17 @@ module {
         #Mint;
         #Burn;
         #Transfer;
+        #TransferFrom;
         #ApproveCollection;
         #ApproveToken;
-        #RevokeCollection;
         #RevokeToken;
-        #TransferFrom;
+        #RevokeCollection;
         #UpdateMetadata;
     };
 
     public type Intent = {
         #Mint: (MintArg, Account);
-        #ApproveCollection: (ApproveCollectionArg, Account, AccountRecord);
+        #ApproveCollection: (ApproveCollectionArg, Account, ?AccountRecord);
         #RevokeCollection: (RevokeCollectionApprovalArg, Account, AccountRecord);
         #Burn : (BurnArg, Account, TokenRecord);
         #Transfer :(TransferArg, Account, TokenRecord);
@@ -182,6 +182,7 @@ module {
         memo: ?Blob;
         created_at_time: ?Nat64;
     };
+
     
     
     public type MintArg = {
@@ -410,14 +411,18 @@ module {
         #Err : TransferFromError;
     };
 
-   
-
     public type PropertyDetails = {
-        location: LocationDetails;  // Location-specific details, including property name
-        physical: PhysicalDetails;  // Physical characteristics of the property
-        additional: AdditionalDetails;  // Additional property-related details
-        description: Text;  // General description of the property
-    };
+       location: LocationDetails;  // Location-specific details, including property name
+       physical: PhysicalDetails;  // Physical characteristics of the property
+       additional: AdditionalDetails;  // Additional property-related details
+       misc: Miscellaneous;
+   };
+
+   public type Miscellaneous = {
+        description: Text;
+        imageId: Nat;
+        images: [(Nat, Text)];
+   };
 
     public type LocationDetails = {
         name: Text;  // Name of the property

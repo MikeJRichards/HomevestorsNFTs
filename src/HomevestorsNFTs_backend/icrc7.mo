@@ -48,26 +48,42 @@ module ICRC7 {
       }
     };
     
-    public func icrc7_transferHelper(args: [TransferArg], ctx: TxnContext, caller: Principal): ([?TransferResult], TxnContext) {
+    public func icrc7_transferHelper(args: [TransferArg], ctx: TxnContext, caller: Principal): [?TransferResult] {
       Utils.batchExecute<TransferArg, TransferError>(args, ctx, caller, func(arg: TransferArg) { #Transfer(arg) },  handleTransferValidationError);
+    };
+
+    public func verify_icrc7_transfer(args:[TransferArg], ctx: TxnContext, caller: Principal): [?TransferResult] {
+      Utils.verify_func<TransferArg, TransferError>(args, ctx, caller, func(arg: TransferArg) { #Transfer(arg) },  handleTransferValidationError).0;
     };
 
    
 
-    public func mintNFT(args: [MintArg], ctx: TxnContext, caller: Principal): ([?MintResult], TxnContext) {
-      let (results, updatedCtx) = Utils.batchExecute<MintArg, MintError>(args, ctx, caller, func(arg: MintArg) { #Mint(arg) },  handleMintValidationError);
-      updatedCtx.metadata.put("icrc7:total_supply", #Nat(updatedCtx.totalSupply));
-      return (results, updatedCtx);
+    public func mintNFT(args: [MintArg], ctx: TxnContext, caller: Principal): [?MintResult] {
+      let results = Utils.batchExecute<MintArg, MintError>(args, ctx, caller, func(arg: MintArg) { #Mint(arg) },  handleMintValidationError);
+      ctx.metadata.put("icrc7:total_supply", #Nat(ctx.totalSupply));
+      return results;
     };
 
-    public func burnNFT(args: [BurnArg], ctx: TxnContext, caller: Principal): ([?TransferResult], TxnContext) {
-      let (results, updatedCtx) = Utils.batchExecute<BurnArg, TransferError>(args, ctx, caller, func(arg: BurnArg) { #Burn(arg) },  handleTransferValidationError);
-      updatedCtx.metadata.put("icrc7:total_supply", #Nat(updatedCtx.totalSupply));
-      return (results, updatedCtx);
+    public func verify_icrc7_Mint(args:[MintArg], ctx: TxnContext, caller: Principal): [?MintResult] {
+      Utils.verify_func<MintArg, MintError>(args, ctx, caller, func(arg: MintArg) { #Mint(arg) },  handleMintValidationError).0;
     };
 
-    public func updateTokenMetadata(args: [TokenMetadataArg], ctx: TxnContext, caller: Principal): ([?TokenMetadataResult], TxnContext) {
+    public func burnNFT(args: [BurnArg], ctx: TxnContext, caller: Principal): [?TransferResult] {
+      let results = Utils.batchExecute<BurnArg, TransferError>(args, ctx, caller, func(arg: BurnArg) { #Burn(arg) },  handleTransferValidationError);
+      ctx.metadata.put("icrc7:total_supply", #Nat(ctx.totalSupply));
+      return results;
+    };
+
+    public func verify_icrc7_Burn(args:[BurnArg], ctx: TxnContext, caller: Principal): [?TransferResult] {
+      Utils.verify_func<BurnArg, TransferError>(args, ctx, caller, func(arg: BurnArg) { #Burn(arg) },  handleTransferValidationError).0;
+    };
+
+    public func updateTokenMetadata(args: [TokenMetadataArg], ctx: TxnContext, caller: Principal): [?TokenMetadataResult] {
       Utils.batchExecute<TokenMetadataArg, StandardError>(args, ctx, caller, func(arg: TokenMetadataArg) { #UpdateMetadata(arg) },  handleMetadataUpdateValidationError);
+    };
+
+    public func verifyTokenMetadata(args: [TokenMetadataArg], ctx: TxnContext, caller: Principal): [?TokenMetadataResult] {
+      Utils.verify_func<TokenMetadataArg, StandardError>(args, ctx, caller, func(arg: TokenMetadataArg) { #UpdateMetadata(arg) },  handleMetadataUpdateValidationError).0;
     };
 
     public func icrc7_owner_of(token_ids: [Nat], tokens: TokenRecords) : [ ?Account ] {

@@ -83,6 +83,7 @@ module {
     };
 
     public func handleApproveCollectionValidationError(error: ValidationError): ApproveCollectionError {
+     // Debug.print(debug_show(error));
       switch(error){
         case(#ApproveCollectionError(e) or #BaseError(e)) return e;
         case(_) return #GenericError{error_code = 998; message = "invalid response";}
@@ -97,6 +98,7 @@ module {
     };
 
     public func handleRevokeCollectionApprovalValidationError(error: ValidationError): RevokeCollectionApprovalError {
+     // Debug.print(debug_show(error));
       switch(error){
         case(#BaseError(e: RevokeCollectionApprovalError) or #RevokeCollectionApprovalError(e)) return e;
         case(_) return #GenericError{error_code = 998; message = "invalid response";}
@@ -112,24 +114,44 @@ module {
 
   
 
-    public func handleApproveTokenRecords(args: [ApproveTokenArg], ctx: TxnContext, caller: Principal): ([?ApproveTokenResult], TxnContext) {
+    public func handleApproveTokenRecords(args: [ApproveTokenArg], ctx: TxnContext, caller: Principal): [?ApproveTokenResult] {
       Utils.batchExecute<ApproveTokenArg, ApproveTokenError>(args, ctx, caller, func(arg: ApproveTokenArg) { #ApproveToken(arg) },  handleApproveTokenValidationError);
     };
 
-    public func handleApproveCollection(args: [ApproveCollectionArg], ctx: TxnContext, caller: Principal): ([?ApproveCollectionResult], TxnContext) {
+    public func verifyApproveTokenRecords(args: [ApproveTokenArg], ctx: TxnContext, caller: Principal): [?ApproveTokenResult] {
+      Utils.verify_func<ApproveTokenArg, ApproveTokenError>(args, ctx, caller, func(arg: ApproveTokenArg) { #ApproveToken(arg) },  handleApproveTokenValidationError).0;
+    };
+
+    public func handleApproveCollection(args: [ApproveCollectionArg], ctx: TxnContext, caller: Principal): [?ApproveCollectionResult] {
       Utils.batchExecute<ApproveCollectionArg, ApproveCollectionError>(args, ctx, caller, func(arg: ApproveCollectionArg) { #ApproveCollection(arg) },  handleApproveCollectionValidationError);
     };
 
-    public func handleRevokeTokenApprovals(args: [RevokeTokenApprovalArg], ctx: TxnContext, caller: Principal): ([?RevokeTokenApprovalResponse], TxnContext) {
+    public func verifyApproveCollection(args: [ApproveCollectionArg], ctx: TxnContext, caller: Principal): [?ApproveCollectionResult] {
+      Utils.verify_func<ApproveCollectionArg, ApproveCollectionError>(args, ctx, caller, func(arg: ApproveCollectionArg) { #ApproveCollection(arg) },  handleApproveCollectionValidationError).0;
+    };
+
+    public func handleRevokeTokenApprovals(args: [RevokeTokenApprovalArg], ctx: TxnContext, caller: Principal): [?RevokeTokenApprovalResponse] {
       Utils.batchExecute<RevokeTokenApprovalArg, RevokeTokenApprovalError>(args, ctx, caller, func(arg: RevokeTokenApprovalArg) { #RevokeToken(arg) },  handleRevokeTokenApprovalValidationError);
     };
 
-    public func handleRevokeCollectionApproval(args: [RevokeCollectionApprovalArg], ctx: TxnContext, caller: Principal): ([?RevokeCollectionApprovalResult], TxnContext) {
+    public func verifyRevokeTokenApprovals(args: [RevokeTokenApprovalArg], ctx: TxnContext, caller: Principal): [?RevokeTokenApprovalResponse] {
+      Utils.verify_func<RevokeTokenApprovalArg, RevokeTokenApprovalError>(args, ctx, caller, func(arg: RevokeTokenApprovalArg) { #RevokeToken(arg) },  handleRevokeTokenApprovalValidationError).0;
+    };
+
+    public func handleRevokeCollectionApproval(args: [RevokeCollectionApprovalArg], ctx: TxnContext, caller: Principal): [?RevokeCollectionApprovalResult] {
       Utils.batchExecute<RevokeCollectionApprovalArg,  RevokeCollectionApprovalError>(args, ctx, caller, func(arg: RevokeCollectionApprovalArg) { #RevokeCollection(arg) },  handleRevokeCollectionApprovalValidationError);
     };
 
-    public func handleTransferFrom(args: [TransferFromArg], ctx: TxnContext, caller: Principal): ([?TransferFromResult], TxnContext) {
+    public func verifyRevokeCollectionApproval(args: [RevokeCollectionApprovalArg], ctx: TxnContext, caller: Principal): [?RevokeCollectionApprovalResult] {
+      Utils.verify_func<RevokeCollectionApprovalArg,  RevokeCollectionApprovalError>(args, ctx, caller, func(arg: RevokeCollectionApprovalArg) { #RevokeCollection(arg) },  handleRevokeCollectionApprovalValidationError).0;
+    };
+
+    public func handleTransferFrom(args: [TransferFromArg], ctx: TxnContext, caller: Principal): [?TransferFromResult] {
       Utils.batchExecute<TransferFromArg, TransferFromError>(args, ctx, caller, func(arg: TransferFromArg) { #TransferFrom(arg) },  handleTransferFromValidationError);
+    };
+
+    public func verifyTransferFrom(args: [TransferFromArg], ctx: TxnContext, caller: Principal): [?TransferFromResult] {
+      Utils.verify_func<TransferFromArg, TransferFromError>(args, ctx, caller, func(arg: TransferFromArg) { #TransferFrom(arg) },  handleTransferFromValidationError).0;
     };
 
 

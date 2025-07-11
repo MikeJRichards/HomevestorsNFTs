@@ -38,7 +38,7 @@ module {
     };
     
 
-    public func updateLedger(intent: Intent, ctx: TxnContext): TxnContext {
+    public func updateLedger(intent: Intent, ctx: TxnContext): () {
         let block = createBlock(intent, ctx);
         let valueBlock = ICRC3.blockToValue(block); 
         let hashBlock =  ICRC3.hashValue(valueBlock);
@@ -46,7 +46,6 @@ module {
         ctx.index += 1;
         ctx.phash := hashBlock;
         ctx.ledger.add({id = ctx.index; block = valueBlock});
-        ctx;
     };
 
     func createTX(intent: Intent, tid: Nat): Tx {

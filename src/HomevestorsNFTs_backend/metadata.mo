@@ -11,17 +11,19 @@ module {
     type Metadata = Types.Metadata;
     type Value = Types.Value;
     type TxnContext = Types.TxnContext;
-    type PropertyDetails = Types.PropertyDetails;
-    type LocationDetails = Types.LocationDetails;
-    type PhysicalDetails = Types.PhysicalDetails;
-    type AdditionalDetails = Types.AdditionalDetails;
-    type CreateFinancialsArg = Types.CreateFinancialsArg;
     type TokenMetadataArg = Types.TokenMetadataArg;
     type TokenMetadataResult = Types.TokenMetadataResult;
     type StandardError = Types.StandardError;
     type TokenRecords = Types.TokenRecords;
     type ValidationOutcome = Types.ValidationOutcome;
     type ValidationError = Types.ValidationError;
+    type PropertyDetails = Types.PropertyDetails;
+    type LocationDetails = Types.LocationDetails;
+    type PhysicalDetails = Types.PhysicalDetails;
+    type AdditionalDetails = Types.AdditionalDetails;
+    type CreateFinancialsArg = Types.CreateFinancialsArg;
+    type Miscellaneous = Types.Miscellaneous;
+    
 
      public func initiateMetadata(metadata: Metadata, totalSupply: Nat, propertyId: Nat): Metadata {
         metadata.put("icrc7:symbol", #Text("HVD-P"#Nat.toText(propertyId)));
@@ -58,22 +60,30 @@ module {
         metadata.put("icrc7:default_take_value", #Nat(50));
         metadata.put("icrc7:max_take_value", #Nat(500));
         metadata.put("icrc7:max_memo_size", #Nat(500));
-        metadata.put("icrc7:atomic_batch_transfers", #Text("true"));//true or false
-        metadata.put("icrc7:tx_window", #Nat(60000));
-        metadata.put("icrc7:permitted_drift", #Nat(60000));
+        metadata.put("icrc7:atomic_batch_transfers", #Text("false"));//true or false
+        metadata.put("icrc7:tx_window", #Nat(300_000_000_000));
+        metadata.put("icrc7:permitted_drift", #Nat(300_000_000_000));
         metadata.put("icrc37_max_approvals_per_token_or_collection", #Nat(100));
         metadata.put("icrc37:max_revoke_approvals", #Nat(100));
         
         return metadata;
     };
 
-    func createPropertyDetails(metadata: Metadata): PropertyDetails {
+     func createPropertyDetails(metadata: Metadata): PropertyDetails {
         return {
             location = createLocationDetails(metadata);
             physical = createPhysicalDetails(metadata);
             additional = createAdditionalDetails(metadata);
-            description = unwrapText("description", "placeholder", metadata);
+            misc = createMisc(metadata);
         }
+    };
+
+    func createMisc(metadata: Metadata): Miscellaneous {
+      return {
+        description = unwrapText("description", "placeholder", metadata);
+        imageId = 0;
+        images = [(0, unwrapText("icrc7:logo", "https://nwyye-naaaa-aaaap-qpwka-cai.icp0.io/nft1.jpg", metadata))];
+      }
     };
 
     func createLocationDetails(metadata: Metadata): LocationDetails {
@@ -172,7 +182,7 @@ module {
 
 
   public func removeTokenMetadata(ctx: TxnContext, tokenId: Nat, key: Text, caller: Principal): TxnContext {
-    assert(Principal.equal(caller, ctx.admin));
+    assert(Principal.equal(caller, ctx.admin.owner));
     switch(ctx.tokens.get(tokenId)){
       case(null){};
       case(?record){
@@ -264,7 +274,7 @@ module {
     };
 
     public func exceedMaxSupply(ctx: TxnContext): Bool {
-      switch (ctx.metadata.get("icrc7:total_supply")) {
+      switch (ctx.metadata.get("icrc7:supply_cap")) {
         case (?#Nat(m)) ctx.totalSupply + 1 > m; 
         case(_) false; 
       }
